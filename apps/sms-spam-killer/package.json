@@ -1,0 +1,40 @@
+{
+    "name": "sms-spam-killer",
+    "version": "1.0.0",
+    "description": "AI-powered SMS/iMessage spam detection and filtering",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "start": "node dist/index.js",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "clean": "rm -rf dist"
+    },
+    "keywords": [
+        "sms",
+        "spam",
+        "imessage",
+        "classification",
+        "ai"
+    ],
+    "author": "Scott",
+    "license": "MIT",
+    "engines": {
+        "node": ">=18"
+    },
+    "dependencies": {
+        "@tagrouter/engine": "*",
+        "better-sqlite3": "^11.7.0",
+        "openai": "^4.77.0",
+        "yaml": "^2.7.0"
+    },
+    "devDependencies": {
+        "@types/better-sqlite3": "^7.6.12",
+        "@types/node": "^22.10.0",
+        "typescript": "^5.7.2",
+        "vitest": "^2.1.8"
+    }
+}
