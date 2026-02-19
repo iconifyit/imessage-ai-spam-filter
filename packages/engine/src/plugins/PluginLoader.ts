@@ -358,6 +358,9 @@ export class PluginLoader {
 
     /**
      * Type guard for YAML classifier definition.
+     *
+     * @param obj - The object to check
+     * @returns True if the object matches YamlClassifierDefinition structure
      */
     private isYamlClassifierDefinition(obj: unknown): obj is YamlClassifierDefinition {
         return (

@@ -60,17 +60,22 @@ export class IMessageEntityProvider implements EntityProvider<SMSMessage> {
     readonly description = "Provides SMS/iMessage messages from macOS Messages.app";
 
     private db: ChatDatabase;
-    private config: Required<IMessageProviderConfig>;
+    private config: {
+        dbPath?: string;
+        defaultLimit: number;
+        inboundOnly: boolean;
+    };
     private lastMessageId: number = 0;
-    private initialized = false;
+    private initialized: boolean = false;
 
     constructor(config: IMessageProviderConfig = {}) {
         this.config = {
-            dbPath      : config.dbPath ?? undefined!,
+            dbPath      : config.dbPath,
             defaultLimit: config.defaultLimit ?? 100,
             inboundOnly : config.inboundOnly ?? true,
         };
 
+        // ChatDatabase uses default path if undefined
         this.db = new ChatDatabase(this.config.dbPath);
     }
 
@@ -178,6 +183,9 @@ export class IMessageEntityProvider implements EntityProvider<SMSMessage> {
 
     /**
      * Convert an IMessage from the database to an SMSMessage entity.
+     *
+     * @param msg - The raw IMessage from the database
+     * @returns SMSMessage entity for use in the classification pipeline
      */
     private messageToEntity(msg: IMessage): SMSMessage {
         return createSMSMessage({
