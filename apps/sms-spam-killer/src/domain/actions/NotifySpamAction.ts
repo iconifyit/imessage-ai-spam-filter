@@ -14,7 +14,6 @@ import type {
     ActionBinding,
     MessageType,
 } from "@tagrouter/engine";
-import { showNotification } from "../../adapters/imessage/services/applescript.js";
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
 /**
@@ -33,11 +32,6 @@ export interface NotifySpamActionPluginConfig {
      * Defaults to "{{type}} Detected".
      */
     readonly titleTemplate?: string;
-
-    /**
-     * Optional sound to play (e.g., "default", "Basso").
-     */
-    readonly sound?: string;
 }
 
 /**
@@ -55,7 +49,7 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
 /**
  * Notify Spam Action Plugin
  *
- * Shows a macOS notification when suspicious messages are detected.
+ * Logs a notification to the console when suspicious messages are detected.
  *
  * @example
  * ```typescript
@@ -64,7 +58,6 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
  *         spam: { minConfidence: 0.7 },
  *         suspicious: { minConfidence: 0.6 },
  *     },
- *     sound: "Basso",
  * });
  *
  * // Engine will call handle() when bindings match
@@ -74,16 +67,14 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
 export class NotifySpamActionPlugin implements ActionPlugin {
     readonly id          = "notify-spam";
     readonly name        = "Notify Spam Detection";
-    readonly description = "Shows a notification when spam is detected";
+    readonly description = "Logs a console notification when spam is detected";
     readonly bindings: Record<MessageType, ActionBinding>;
 
     private titleTemplate: string;
-    private sound?: string;
 
     constructor(config: NotifySpamActionPluginConfig = {}) {
         this.bindings      = config.bindings ?? DEFAULT_BINDINGS;
         this.titleTemplate = config.titleTemplate ?? "{{type}} Detected";
-        this.sound         = config.sound;
     }
 
     /**
@@ -107,60 +98,27 @@ export class NotifySpamActionPlugin implements ActionPlugin {
 
         const subtitle = `Confidence: ${Math.round((classification.confidence ?? 1) * 100)}%`;
 
-        logger.info("Showing spam notification", {
+        // Log notification to console instead of showing macOS notification
+        console.log(`\n🚨 ${title}`);
+        console.log(`   ${subtitle}`);
+        console.log(`   ${notificationMessage.replace(/\n/g, "\n   ")}`);
+
+        logger.info("Spam notification logged", {
             messageId: message.id,
             sender,
             type     : classification.type,
             title,
         });
 
-        try {
-            const result = await showNotification(
+        return {
+            actionId: this.id,
+            success : true,
+            data    : {
                 title,
-                notificationMessage,
+                message: notificationMessage,
                 subtitle,
-                this.sound
-            );
-
-            if (result.success) {
-                logger.debug("Notification shown successfully", {
-                    messageId: message.id,
-                });
-
-                return {
-                    actionId: this.id,
-                    success : true,
-                    data    : {
-                        title,
-                        message: notificationMessage,
-                        subtitle,
-                    },
-                };
-            }
-
-            logger.warn("Failed to show notification", {
-                messageId: message.id,
-                error    : result.error,
-            });
-
-            return {
-                actionId: this.id,
-                success : false,
-                error   : result.error || "Unknown notification error",
-            };
-        }
-        catch (error) {
-            logger.error("Notification action threw error", {
-                messageId: message.id,
-                error    : error instanceof Error ? error.message : String(error),
-            });
-
-            return {
-                actionId: this.id,
-                success : false,
-                error   : error instanceof Error ? error.message : String(error),
-            };
-        }
+            },
+        };
     }
 
     /**
