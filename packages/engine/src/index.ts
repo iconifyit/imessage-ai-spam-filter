@@ -98,3 +98,17 @@ export {
     type EngineConfig,
     type EngineLogger,
 } from "./engine/index.js";
+
+// ============================================================================
+// Plugin loader exports
+// ============================================================================
+
+export {
+    PluginLoader,
+    createClassifierFromYaml,
+    type YamlClassifierDefinition,
+    type YamlActionDefinition,
+    type LoadedPlugins,
+    type PluginLoaderConfig,
+    type PluginLoaderLogger,
+} from "./plugins/index.js";

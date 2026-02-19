@@ -5,6 +5,11 @@
  * It uses the TagRouterEngine to wire together the domain components
  * (provider, classifiers, actions) and orchestrate the processing pipeline.
  *
+ * Plugin loading order:
+ * 1. System plugins (./plugins/system) - pattern-based classifiers
+ * 2. AI classifier - for messages not matched by patterns
+ * 3. User plugins (./plugins/user) - custom user rules
+ *
  * @module sms-spam-killer
  */
 
@@ -12,7 +17,13 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
 // Engine
-import { TagRouterEngine, type DomainRegistration } from "@tagrouter/engine";
+import {
+    TagRouterEngine,
+    PluginLoader,
+    type DomainRegistration,
+    type ClassificationPlugin,
+    type ActionPlugin,
+} from "@tagrouter/engine";
 
 // Domain components
 import {
@@ -41,6 +52,12 @@ interface AppConfig {
 
     /** System prompt for the classifier */
     systemPrompt: string;
+
+    /** Path to system plugins directory */
+    systemPluginsDir: string;
+
+    /** Path to user plugins directory */
+    userPluginsDir: string;
 }
 
 /**
@@ -77,22 +94,42 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
         inboundOnly: true,
     });
 
-    // Create classifier plugin
-    const classifier = new SMSClassificationPlugin({
+    // Load plugins
+    const pluginLoader = new PluginLoader();
+    const classifiers: ClassificationPlugin[] = [];
+    const actions: ActionPlugin[] = [];
+
+    // 1. Load system plugins (pattern-based, run first)
+    console.log(`[INFO] Loading system plugins from: ${config.systemPluginsDir}`);
+    const systemPlugins = await pluginLoader.loadFromDirectory(config.systemPluginsDir);
+    classifiers.push(...systemPlugins.classifiers);
+    actions.push(...systemPlugins.actions);
+    console.log(`[INFO] Loaded ${systemPlugins.classifiers.length} system classifiers`);
+
+    // 2. Add AI classifier (runs after pattern-based classifiers)
+    const aiClassifier = new SMSClassificationPlugin({
         types,
         systemPrompt: config.systemPrompt,
     });
+    await aiClassifier.initialize();
+    classifiers.push(aiClassifier);
+    console.log(`[INFO] AI classifier initialized`);
 
-    // Initialize classifier (loads OpenAI config)
-    await classifier.initialize();
+    // 3. Load user plugins (custom rules)
+    console.log(`[INFO] Loading user plugins from: ${config.userPluginsDir}`);
+    const userPlugins = await pluginLoader.loadFromDirectory(config.userPluginsDir);
+    classifiers.push(...userPlugins.classifiers);
+    actions.push(...userPlugins.actions);
+    console.log(`[INFO] Loaded ${userPlugins.classifiers.length} user classifiers`);
 
-    // Create action plugins
-    const actions = [
+    // Add built-in action plugins
+    actions.push(
         new NotifySpamActionPlugin({
             bindings: {
                 spam          : { minConfidence: 0.7 },
                 scam          : { minConfidence: 0.7 },
                 political_spam: { minConfidence: 0.7 },
+                suspicious    : { minConfidence: 0.8 },
             },
         }),
         new DeleteSpamActionPlugin({
@@ -102,13 +139,16 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
             },
             dryRun: config.dryRun,
         }),
-    ];
+    );
+
+    console.log(`[INFO] Total classifiers: ${classifiers.length}`);
+    console.log(`[INFO] Total actions: ${actions.length}`);
 
     return {
         id         : "sms",
         name       : "SMS Spam Killer",
         provider,
-        classifiers: [classifier],
+        classifiers,
         actions,
         config     : {
             dryRun: config.dryRun,
@@ -138,9 +178,11 @@ async function main(): Promise<void> {
 
     // Build configuration
     const config: AppConfig = {
-        pollingInterval: 30000, // 30 seconds
+        pollingInterval : 30000, // 30 seconds
         dryRun,
-        systemPrompt   : DEFAULT_SYSTEM_PROMPT,
+        systemPrompt    : DEFAULT_SYSTEM_PROMPT,
+        systemPluginsDir: join(__dirname, "..", "plugins", "system"),
+        userPluginsDir  : join(__dirname, "..", "plugins", "user"),
     };
 
     // Create the engine
@@ -159,8 +201,8 @@ async function main(): Promise<void> {
     });
 
     engine.eventBus.subscribe("message:classified", (event) => {
-        const data = event.data as { messageId: string; type: string; confidence: number };
-        console.log(`[CLASSIFIED] ${data.messageId}: ${data.type} (${(data.confidence * 100).toFixed(0)}%)`);
+        const data = event.data as { messageId: string; type: string; confidence: number; classifierId: string };
+        console.log(`[CLASSIFIED] ${data.messageId}: ${data.type} (${(data.confidence * 100).toFixed(0)}%) by ${data.classifierId}`);
     });
 
     engine.eventBus.subscribe("message:unclassified", (event) => {
