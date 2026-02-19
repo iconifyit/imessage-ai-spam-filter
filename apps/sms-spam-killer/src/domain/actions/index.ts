@@ -5,11 +5,11 @@
  */
 
 export {
-    DeleteSpamActionPlugin,
-    type DeleteSpamActionPluginConfig,
-} from "./DeleteSpamAction.js";
+    DeleteActionPlugin,
+    type DeleteActionPluginConfig,
+} from "./DeleteAction.js";
 
 export {
-    NotifySpamActionPlugin,
-    type NotifySpamActionPluginConfig,
-} from "./NotifySpamAction.js";
+    NotifyActionPlugin,
+    type NotifyActionPluginConfig,
+} from "./NotifyAction.js";

@@ -20,7 +20,6 @@ export {
     openChat,
     isMessagesRunning,
     activateMessages,
-    showNotification,
     speakText,
     copyToClipboard,
     getUnreadCount,

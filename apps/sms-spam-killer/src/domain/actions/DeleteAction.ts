@@ -1,10 +1,10 @@
 /**
- * @fileoverview Delete Spam Action Plugin
+ * @fileoverview Delete Action Plugin
  *
  * Implements the ActionPlugin contract to delete conversations
  * classified as spam.
  *
- * @module domain/actions/DeleteSpamAction
+ * @module domain/actions/DeleteAction
  */
 
 import type {
@@ -18,9 +18,9 @@ import { deleteConversationBySender } from "../../adapters/imessage/services/app
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
 /**
- * Configuration for DeleteSpamActionPlugin
+ * Configuration for DeleteActionPlugin
  */
-export interface DeleteSpamActionPluginConfig {
+export interface DeleteActionPluginConfig {
     /**
      * Bindings that map message types to minimum confidence thresholds.
      * Example: { "spam": { minConfidence: 0.9 }, "scam": { minConfidence: 0.85 } }
@@ -44,14 +44,14 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
 };
 
 /**
- * Delete Spam Action Plugin
+ * Delete Action Plugin
  *
  * Deletes conversations that are classified as spam with high confidence.
  * Uses AppleScript to interact with Messages.app.
  *
  * @example
  * ```typescript
- * const action = new DeleteSpamActionPlugin({
+ * const action = new DeleteActionPlugin({
  *     bindings: {
  *         spam: { minConfidence: 0.9 },
  *         political_spam: { minConfidence: 0.85 },
@@ -64,7 +64,7 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
  * console.log(result.success ? "Deleted" : result.error);
  * ```
  */
-export class DeleteSpamActionPlugin implements ActionPlugin {
+export class DeleteActionPlugin implements ActionPlugin {
     readonly id          = "delete-spam";
     readonly name        = "Delete Spam Messages";
     readonly description = "Deletes conversations classified as spam";
@@ -72,7 +72,7 @@ export class DeleteSpamActionPlugin implements ActionPlugin {
 
     private dryRun: boolean;
 
-    constructor(config: DeleteSpamActionPluginConfig = {}) {
+    constructor(config: DeleteActionPluginConfig = {}) {
         this.bindings = config.bindings ?? DEFAULT_BINDINGS;
         this.dryRun   = config.dryRun ?? false;
     }

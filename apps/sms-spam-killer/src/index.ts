@@ -8,7 +8,7 @@
  * Plugin loading order:
  * 1. System plugins (./plugins/system) - pattern-based classifiers
  * 2. AI classifier - for messages not matched by patterns
- * 3. User plugins (./plugins/user) - custom user rules
+ * 3. User plugins (./user/plugins) - custom user rules
  *
  * @module sms-spam-killer
  */
@@ -29,8 +29,8 @@ import {
 import {
     IMessageEntityProvider,
     SMSClassificationPlugin,
-    DeleteSpamActionPlugin,
-    NotifySpamActionPlugin,
+    DeleteActionPlugin,
+    NotifyActionPlugin,
 } from "./domain/index.js";
 
 // Config loader
@@ -124,7 +124,7 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
 
     // Add built-in action plugins
     actions.push(
-        new NotifySpamActionPlugin({
+        new NotifyActionPlugin({
             bindings: {
                 spam          : { minConfidence: 0.7 },
                 scam          : { minConfidence: 0.7 },
@@ -132,7 +132,7 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
                 suspicious    : { minConfidence: 0.8 },
             },
         }),
-        new DeleteSpamActionPlugin({
+        new DeleteActionPlugin({
             bindings: {
                 spam: { minConfidence: 0.9 },
                 scam: { minConfidence: 0.9 },
@@ -182,7 +182,7 @@ async function main(): Promise<void> {
         dryRun,
         systemPrompt    : DEFAULT_SYSTEM_PROMPT,
         systemPluginsDir: join(__dirname, "..", "plugins", "system"),
-        userPluginsDir  : join(__dirname, "..", "plugins", "user"),
+        userPluginsDir  : join(__dirname, "..", "user", "plugins"),
     };
 
     // Create the engine

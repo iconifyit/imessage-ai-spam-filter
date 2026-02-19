@@ -1,10 +1,10 @@
 /**
- * @fileoverview Notify Spam Action Plugin
+ * @fileoverview Notify Action Plugin
  *
- * Implements the ActionPlugin contract to show notifications
+ * Implements the ActionPlugin contract to log notifications
  * when spam is detected.
  *
- * @module domain/actions/NotifySpamAction
+ * @module domain/actions/NotifyAction
  */
 
 import type {
@@ -17,9 +17,9 @@ import type {
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
 /**
- * Configuration for NotifySpamActionPlugin
+ * Configuration for NotifyActionPlugin
  */
-export interface NotifySpamActionPluginConfig {
+export interface NotifyActionPluginConfig {
     /**
      * Bindings that map message types to minimum confidence thresholds.
      * Example: { "spam": { minConfidence: 0.7 }, "suspicious": { minConfidence: 0.6 } }
@@ -39,21 +39,21 @@ export interface NotifySpamActionPluginConfig {
  * Notifies for spam, promotional, and suspicious messages with lower threshold.
  */
 const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
-    spam              : { minConfidence: 0.7 },
-    promotional       : { minConfidence: 0.7 },
-    suspicious        : { minConfidence: 0.7 },
-    political_spam    : { minConfidence: 0.7 },
-    scam              : { minConfidence: 0.7 },
+    spam           : { minConfidence: 0.7 },
+    promotional    : { minConfidence: 0.7 },
+    suspicious     : { minConfidence: 0.7 },
+    political_spam : { minConfidence: 0.7 },
+    scam           : { minConfidence: 0.7 },
 };
 
 /**
- * Notify Spam Action Plugin
+ * Notify Action Plugin
  *
  * Logs a notification to the console when suspicious messages are detected.
  *
  * @example
  * ```typescript
- * const action = new NotifySpamActionPlugin({
+ * const action = new NotifyActionPlugin({
  *     bindings: {
  *         spam: { minConfidence: 0.7 },
  *         suspicious: { minConfidence: 0.6 },
@@ -64,7 +64,7 @@ const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
  * const result = await action.handle(context);
  * ```
  */
-export class NotifySpamActionPlugin implements ActionPlugin {
+export class NotifyActionPlugin implements ActionPlugin {
     readonly id          = "notify-spam";
     readonly name        = "Notify Spam Detection";
     readonly description = "Logs a console notification when spam is detected";
@@ -72,7 +72,7 @@ export class NotifySpamActionPlugin implements ActionPlugin {
 
     private titleTemplate: string;
 
-    constructor(config: NotifySpamActionPluginConfig = {}) {
+    constructor(config: NotifyActionPluginConfig = {}) {
         this.bindings      = config.bindings ?? DEFAULT_BINDINGS;
         this.titleTemplate = config.titleTemplate ?? "{{type}} Detected";
     }

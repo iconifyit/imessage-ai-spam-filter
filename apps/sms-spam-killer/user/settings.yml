@@ -1,0 +1,83 @@
+# SMS Spam Killer - User Settings
+# ================================
+# This file contains user-customizable settings for the SMS Spam Killer app.
+# Edit these values to customize the app's behavior.
+#
+# IMPORTANT: This file is yours to modify. It will not be overwritten by app updates.
+
+# -----------------------------------------------------------------------------
+# General Settings
+# -----------------------------------------------------------------------------
+
+# Polling interval in milliseconds (how often to check for new messages)
+# Default: 30000 (30 seconds)
+pollingInterval: 30000
+
+# Dry run mode - when true, no messages will actually be deleted
+# Set to false to enable actual deletion (use with caution!)
+# Default: true
+dryRun: true
+
+# Maximum messages to process per batch
+# Default: 10
+batchSize: 10
+
+# -----------------------------------------------------------------------------
+# Classification Settings
+# -----------------------------------------------------------------------------
+
+# Minimum confidence threshold for AI classifications
+# Classifications below this threshold will be ignored
+# Range: 0.0 to 1.0
+# Default: 0.5
+minClassificationConfidence: 0.5
+
+# -----------------------------------------------------------------------------
+# Action Settings
+# -----------------------------------------------------------------------------
+
+# Notification action settings
+notify:
+  # Enable console notifications
+  enabled: true
+
+  # Message types that trigger notifications and their minimum confidence
+  bindings:
+    spam: 0.7
+    scam: 0.7
+    political_spam: 0.7
+    suspicious: 0.8
+    promotional: 0.8
+
+# Delete action settings
+delete:
+  # Enable delete action (respects dryRun setting above)
+  enabled: true
+
+  # Message types that trigger deletion and their minimum confidence
+  # Higher thresholds recommended to avoid false positives
+  bindings:
+    spam: 0.9
+    scam: 0.9
+
+# -----------------------------------------------------------------------------
+# Custom Type Definitions
+# -----------------------------------------------------------------------------
+# You can define custom message types here, or add them to user/types.yml
+# These will be merged with the system types.
+#
+# Example:
+# customTypes:
+#   - id: work_related
+#     name: Work Related
+#     description: Messages from work contacts or about work topics
+#
+customTypes: []
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+
+# Log level: debug, info, warn, error
+# Default: info
+logLevel: info
