@@ -1,36 +1,31 @@
 /**
- * @fileoverview Notify Spam Action
+ * @fileoverview Notify Spam Action Plugin
  *
- * Implements the Action contract to show notifications
+ * Implements the ActionPlugin contract to show notifications
  * when spam is detected.
  *
  * @module domain/actions/NotifySpamAction
  */
 
 import type {
-    Action,
+    ActionPlugin,
     ActionResult,
     ActionContext,
-    Classification,
+    ActionBinding,
+    MessageType,
 } from "@tagrouter/engine";
 import { showNotification } from "../../adapters/imessage/services/applescript.js";
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
 /**
- * Configuration for NotifySpamAction
+ * Configuration for NotifySpamActionPlugin
  */
-export interface NotifySpamActionConfig {
+export interface NotifySpamActionPluginConfig {
     /**
-     * Classification types that trigger notification.
-     * Defaults to ["spam", "promotional", "suspicious"].
+     * Bindings that map message types to minimum confidence thresholds.
+     * Example: { "spam": { minConfidence: 0.7 }, "suspicious": { minConfidence: 0.6 } }
      */
-    readonly triggerTypes?: string[];
-
-    /**
-     * Minimum confidence required to trigger notification.
-     * Defaults to 0.7 (70%).
-     */
-    readonly minConfidence?: number;
+    readonly bindings?: Record<MessageType, ActionBinding>;
 
     /**
      * Notification title template.
@@ -46,98 +41,90 @@ export interface NotifySpamActionConfig {
 }
 
 /**
- * Notify Spam Action
+ * Default bindings for notify action.
+ * Notifies for spam, promotional, and suspicious messages with lower threshold.
+ */
+const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
+    spam              : { minConfidence: 0.7 },
+    promotional       : { minConfidence: 0.7 },
+    suspicious        : { minConfidence: 0.7 },
+    political_spam    : { minConfidence: 0.7 },
+    scam              : { minConfidence: 0.7 },
+};
+
+/**
+ * Notify Spam Action Plugin
  *
  * Shows a macOS notification when suspicious messages are detected.
  *
  * @example
  * ```typescript
- * const action = new NotifySpamAction({
- *     triggerTypes: ["spam", "suspicious"],
- *     minConfidence: 0.7,
+ * const action = new NotifySpamActionPlugin({
+ *     bindings: {
+ *         spam: { minConfidence: 0.7 },
+ *         suspicious: { minConfidence: 0.6 },
+ *     },
  *     sound: "Basso",
  * });
  *
- * if (action.shouldExecute(classification)) {
- *     await action.execute(context);
- * }
+ * // Engine will call handle() when bindings match
+ * const result = await action.handle(context);
  * ```
  */
-export class NotifySpamAction implements Action {
-    readonly id = "notify-spam";
-    readonly name = "Notify Spam Detection";
+export class NotifySpamActionPlugin implements ActionPlugin {
+    readonly id          = "notify-spam";
+    readonly name        = "Notify Spam Detection";
     readonly description = "Shows a notification when spam is detected";
+    readonly bindings: Record<MessageType, ActionBinding>;
 
-    private config: Required<Omit<NotifySpamActionConfig, "sound">> & { sound?: string };
+    private titleTemplate: string;
+    private sound?: string;
 
-    constructor(config: NotifySpamActionConfig = {}) {
-        this.config = {
-            triggerTypes : config.triggerTypes ?? ["spam", "promotional", "suspicious"],
-            minConfidence: config.minConfidence ?? 0.7,
-            titleTemplate: config.titleTemplate ?? "{{type}} Detected",
-            sound        : config.sound,
-        };
-    }
-
-    /**
-     * Determine if this action should execute for the given classification.
-     *
-     * @param classification - The classification result
-     * @returns true if this action should execute
-     */
-    shouldExecute(classification: Classification): boolean {
-        // Check if classification type matches any trigger type
-        const typeMatches = this.config.triggerTypes.includes(classification.type);
-
-        // Check if confidence meets minimum threshold
-        const confidenceMet = classification.confidence >= this.config.minConfidence;
-
-        return typeMatches && confidenceMet;
+    constructor(config: NotifySpamActionPluginConfig = {}) {
+        this.bindings      = config.bindings ?? DEFAULT_BINDINGS;
+        this.titleTemplate = config.titleTemplate ?? "{{type}} Detected";
+        this.sound         = config.sound;
     }
 
     /**
      * Execute the notification action.
      *
-     * @param context - Execution context with entity and classification
+     * @param context - Execution context with message, classification, config, logger
      * @returns Result of the action execution
      */
-    async execute(context: ActionContext): Promise<ActionResult> {
-        const { entity, classification } = context;
+    async handle(context: ActionContext): Promise<ActionResult> {
+        const { message, classification, logger } = context;
 
-        // Cast to SMSMessage to access metadata
-        const smsEntity = entity as unknown as SMSMessage;
-        const sender = smsEntity.metadata?.sender ?? "Unknown";
+        const smsMessage = message as unknown as SMSMessage;
+        const sender = smsMessage.metadata?.sender ?? "Unknown";
 
-        // Build notification title
-        const title = this.config.titleTemplate.replace(
+        const title = this.titleTemplate.replace(
             "{{type}}",
             this.formatType(classification.type)
         );
 
-        // Build notification message
-        const message = `From: ${sender}\n${this.truncate(entity.content, 100)}`;
+        const notificationMessage = `From: ${sender}\n${this.truncate(message.content, 100)}`;
 
-        // Build subtitle with confidence
-        const subtitle = `Confidence: ${Math.round(classification.confidence * 100)}%`;
+        const subtitle = `Confidence: ${Math.round((classification.confidence ?? 1) * 100)}%`;
 
-        context.logger.info("Showing spam notification", {
-            entityId: entity.id,
+        logger.info("Showing spam notification", {
+            messageId: message.id,
             sender,
-            type    : classification.type,
+            type     : classification.type,
             title,
         });
 
         try {
             const result = await showNotification(
                 title,
-                message,
+                notificationMessage,
                 subtitle,
-                this.config.sound
+                this.sound
             );
 
             if (result.success) {
-                context.logger.debug("Notification shown successfully", {
-                    entityId: entity.id,
+                logger.debug("Notification shown successfully", {
+                    messageId: message.id,
                 });
 
                 return {
@@ -145,28 +132,27 @@ export class NotifySpamAction implements Action {
                     success : true,
                     data    : {
                         title,
-                        message,
+                        message: notificationMessage,
                         subtitle,
                     },
                 };
             }
-            else {
-                context.logger.warn("Failed to show notification", {
-                    entityId: entity.id,
-                    error   : result.error,
-                });
 
-                return {
-                    actionId: this.id,
-                    success : false,
-                    error   : result.error || "Unknown notification error",
-                };
-            }
+            logger.warn("Failed to show notification", {
+                messageId: message.id,
+                error    : result.error,
+            });
+
+            return {
+                actionId: this.id,
+                success : false,
+                error   : result.error || "Unknown notification error",
+            };
         }
         catch (error) {
-            context.logger.error("Notification action threw error", {
-                entityId: entity.id,
-                error   : error instanceof Error ? error.message : String(error),
+            logger.error("Notification action threw error", {
+                messageId: message.id,
+                error    : error instanceof Error ? error.message : String(error),
             });
 
             return {

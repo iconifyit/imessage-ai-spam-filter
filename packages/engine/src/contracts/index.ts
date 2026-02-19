@@ -10,18 +10,35 @@
 // Entity contract
 export type { Entity, EntityFactory } from "./Entity.js";
 
-// Classification contract
-export type { Classification } from "./Classification.js";
-export { createClassification } from "./Classification.js";
-
-// Classifier contract
+// Classification output
 export type {
-    Classifier,
-    ClassifierResult,
-    ClassifierContext,
-    ClassifierLogger,
-} from "./Classifier.js";
-export { shouldHalt } from "./Classifier.js";
+    ClassificationOutput,
+    MessageType,
+} from "./ClassificationOutput.js";
+export {
+    createClassificationOutput,
+    getEffectiveConfidence,
+} from "./ClassificationOutput.js";
+
+// Classification plugin contract
+export type {
+    ClassificationPlugin,
+    ClassificationContext,
+    PluginLogger,
+} from "./ClassificationPlugin.js";
+export { isClassificationPlugin } from "./ClassificationPlugin.js";
+
+// Action plugin contract
+export type {
+    ActionPlugin,
+    ActionBinding,
+    ActionContext,
+    ActionResult,
+} from "./ActionPlugin.js";
+export {
+    isActionPlugin,
+    shouldActionExecute,
+} from "./ActionPlugin.js";
 
 // EntityProvider contract
 export type {
@@ -29,16 +46,6 @@ export type {
     FetchOptions,
     FetchResult,
 } from "./EntityProvider.js";
-
-// Action contract
-export type {
-    Action,
-    ActionResult,
-    ActionContext,
-    ActionLogger,
-    TypeMappedAction,
-} from "./Action.js";
-export { isTypeMappedAction } from "./Action.js";
 
 // EventBus contract
 export type {

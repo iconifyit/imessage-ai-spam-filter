@@ -5,7 +5,7 @@
  */
 
 export {
-    SMSClassifier,
-    type SMSClassifierConfig,
+    SMSClassificationPlugin,
+    type SMSClassificationPluginConfig,
     type TypeDefinition,
 } from "./SMSClassifier.js";

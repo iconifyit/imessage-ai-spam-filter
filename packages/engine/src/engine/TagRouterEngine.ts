@@ -3,15 +3,15 @@
  *
  * The core orchestration engine for TagRouter.
  *
- * Responsibilities:
- * - Daemon lifecycle (start/stop)
- * - Domain registration
- * - Entity processing pipeline
- * - Event emission for observability
+ * Pipeline flow:
+ * 1. Message ingested (immutable)
+ * 2. All classifiers run (not chain-of-responsibility)
+ * 3. Highest confidence result selected
+ * 4. Actions with matching bindings execute
  *
  * Design principles:
  * - Domain-agnostic: knows nothing about SMS, Gmail, etc.
- * - Contract-driven: operates only through defined interfaces
+ * - Plugin-based: classifiers and actions are plugins
  * - Observable: emits events at each lifecycle stage
  * - Pull-based: periodically polls providers for entities
  *
@@ -19,25 +19,31 @@
  */
 
 import type { Entity } from "../contracts/Entity.js";
-import type { Classification } from "../contracts/Classification.js";
 import type {
-    Classifier,
-    ClassifierContext,
-    ClassifierLogger,
-    ClassifierResult,
-} from "../contracts/Classifier.js";
-import type { EntityProvider, FetchResult } from "../contracts/EntityProvider.js";
-import type { Action, ActionContext, ActionLogger } from "../contracts/Action.js";
+    ClassificationOutput,
+    MessageType,
+} from "../contracts/ClassificationOutput.js";
+import {
+    getEffectiveConfidence,
+} from "../contracts/ClassificationOutput.js";
+import type {
+    ClassificationPlugin,
+    ClassificationContext,
+    PluginLogger,
+} from "../contracts/ClassificationPlugin.js";
+import type {
+    ActionPlugin,
+    ActionContext,
+    ActionResult,
+} from "../contracts/ActionPlugin.js";
+import { shouldActionExecute } from "../contracts/ActionPlugin.js";
+import type { EntityProvider } from "../contracts/EntityProvider.js";
 import type { EventBus, EventPayload } from "../contracts/EventBus.js";
 import { createEvent } from "../contracts/EventBus.js";
-import { shouldHalt } from "../contracts/Classifier.js";
 import { InMemoryEventBus } from "../impl/InMemoryEventBus.js";
 
 /**
  * Domain registration - all components needed for a domain.
- *
- * The provider, classifiers, and actions operate on Entity<object>,
- * allowing domain-specific entity types (e.g., SMSMessage) to be used.
  */
 export interface DomainRegistration {
     /** Unique identifier for this domain */
@@ -46,14 +52,14 @@ export interface DomainRegistration {
     /** Human-readable name */
     readonly name: string;
 
-    /** Entity provider for this domain (any entity type extending Entity<object>) */
+    /** Entity provider for this domain */
     readonly provider: EntityProvider<Entity<object>>;
 
-    /** Classifiers to evaluate entities (executed in order) */
-    readonly classifiers: Classifier[];
+    /** Classification plugins to evaluate messages */
+    readonly classifiers: ClassificationPlugin[];
 
-    /** Actions to execute based on classification */
-    readonly actions: Action[];
+    /** Action plugins to execute based on classification */
+    readonly actions: ActionPlugin[];
 
     /** Optional domain-specific configuration */
     readonly config?: Record<string, unknown>;
@@ -97,7 +103,7 @@ const defaultLogger: EngineLogger = {
 };
 
 /**
- * Generate a unique trace ID for entity processing.
+ * Generate a unique trace ID for message processing.
  */
 function generateTraceId(): string {
     const timestamp = Date.now().toString(36);
@@ -106,14 +112,22 @@ function generateTraceId(): string {
 }
 
 /**
+ * Internal result from running all classifiers.
+ * Includes the source classifier ID for debugging.
+ */
+interface ClassifierResultWithSource {
+    readonly output: ClassificationOutput;
+    readonly classifierId: string;
+}
+
+/**
  * TagRouterEngine - The core orchestration engine.
  *
- * The engine:
- * 1. Accepts domain registrations (providers, classifiers, actions)
- * 2. Polls providers for entities on an interval
- * 3. Runs entities through the classification pipeline
- * 4. Executes matching actions
- * 5. Emits events at each stage for observability
+ * Pipeline:
+ * 1. Poll provider for messages
+ * 2. For each message, run ALL classifiers
+ * 3. Select highest confidence result
+ * 4. Execute actions where bindings match
  *
  * @example
  * ```typescript
@@ -124,20 +138,16 @@ function generateTraceId(): string {
  *     id: "sms",
  *     name: "SMS Spam Killer",
  *     provider: new IMessageEntityProvider(),
- *     classifiers: [new SMSClassifier(config)],
- *     actions: [new DeleteSpamAction(), new NotifySpamAction()],
+ *     classifiers: [regexClassifier, aiClassifier],
+ *     actions: [deleteAction, logAction],
  * });
  *
  * // Subscribe to events
- * engine.eventBus.subscribe("entity:classified", (event) => {
+ * engine.eventBus.subscribe("message:classified", (event) => {
  *     console.log("Classified:", event.data);
  * });
  *
- * // Start the engine
  * await engine.start();
- *
- * // Later: stop
- * await engine.stop();
  * ```
  */
 export class TagRouterEngine {
@@ -294,7 +304,7 @@ export class TagRouterEngine {
     }
 
     /**
-     * Poll all domains for new entities.
+     * Poll all domains for new messages.
      */
     private async poll(): Promise<void> {
         for (const domain of this.domains.values()) {
@@ -315,7 +325,7 @@ export class TagRouterEngine {
     }
 
     /**
-     * Poll a single domain for entities and process them.
+     * Poll a single domain for messages and process them.
      */
     private async pollDomain(domain: DomainRegistration): Promise<void> {
         const result = await domain.provider.getEntities({
@@ -326,196 +336,254 @@ export class TagRouterEngine {
             return;
         }
 
-        this.config.logger.debug("Fetched entities", {
+        this.config.logger.debug("Fetched messages", {
             domainId: domain.id,
             count   : result.entities.length,
         });
 
-        for (const entity of result.entities) {
-            await this.processEntity(domain, entity);
+        for (const message of result.entities) {
+            await this.processMessage(domain, message);
         }
     }
 
     /**
-     * Process a single entity through the classification and action pipeline.
+     * Process a single message through the classification and action pipeline.
      *
      * Pipeline:
      * 1. Assign trace ID
-     * 2. Emit entity:received
-     * 3. Run classifiers (chain of responsibility)
-     * 4. Emit entity:classified
-     * 5. Execute matching actions
-     * 6. Emit entity:processed
+     * 2. Emit message:received
+     * 3. Run ALL classifiers, collect results
+     * 4. Select highest confidence result
+     * 5. Emit message:classified
+     * 6. Execute actions with matching bindings
+     * 7. Emit message:processed
      */
-    async processEntity(domain: DomainRegistration, entity: Entity<object>): Promise<void> {
+    async processMessage(domain: DomainRegistration, message: Entity<object>): Promise<void> {
         const traceId = generateTraceId();
         const startTime = Date.now();
 
-        // Attach trace ID to entity if mutable (or track separately)
-        const tracedEntity = { ...entity, traceId } as Entity<object>;
-
-        this.emit(createEvent("entity:received", {
-            domainId: domain.id,
-            entityId: entity.id,
+        this.emit(createEvent("message:received", {
+            domainId : domain.id,
+            messageId: message.id,
         }, traceId));
 
         try {
             // Run classification pipeline
-            this.emit(createEvent("entity:classifying", {
+            this.emit(createEvent("message:classifying", {
                 domainId   : domain.id,
-                entityId   : entity.id,
+                messageId  : message.id,
                 classifiers: domain.classifiers.map(c => c.id),
             }, traceId));
 
-            const classifications = await this.runClassifiers(domain, tracedEntity, traceId);
+            const classificationResult = await this.runClassifiers(domain, message, traceId);
 
-            this.emit(createEvent("entity:classified", {
-                domainId       : domain.id,
-                entityId       : entity.id,
-                classifications: classifications.map(c => ({ type: c.type, confidence: c.confidence })),
+            if (!classificationResult) {
+                // No classifier matched
+                this.emit(createEvent("message:unclassified", {
+                    domainId : domain.id,
+                    messageId: message.id,
+                }, traceId));
+
+                this.config.logger.debug("Message unclassified (no match)", {
+                    domainId : domain.id,
+                    messageId: message.id,
+                    traceId,
+                });
+                return;
+            }
+
+            this.emit(createEvent("message:classified", {
+                domainId    : domain.id,
+                messageId   : message.id,
+                type        : classificationResult.output.type,
+                confidence  : getEffectiveConfidence(classificationResult.output),
+                tags        : classificationResult.output.tags,
+                classifierId: classificationResult.classifierId,
             }, traceId));
 
             // Execute actions
-            if (classifications.length > 0) {
-                await this.executeActions(domain, tracedEntity, classifications, traceId);
-            }
+            await this.executeActions(domain, message, classificationResult.output, traceId);
 
             const duration = Date.now() - startTime;
-            this.emit(createEvent("entity:processed", {
-                domainId: domain.id,
-                entityId: entity.id,
+            this.emit(createEvent("message:processed", {
+                domainId : domain.id,
+                messageId: message.id,
+                type     : classificationResult.output.type,
                 duration,
             }, traceId));
 
-            this.config.logger.debug("Entity processed", {
-                domainId: domain.id,
-                entityId: entity.id,
+            this.config.logger.debug("Message processed", {
+                domainId : domain.id,
+                messageId: message.id,
+                type     : classificationResult.output.type,
                 traceId,
                 duration,
             });
         }
         catch (error) {
-            this.emit(createEvent("entity:error", {
-                domainId: domain.id,
-                entityId: entity.id,
-                error   : error instanceof Error ? error.message : String(error),
+            this.emit(createEvent("message:error", {
+                domainId : domain.id,
+                messageId: message.id,
+                error    : error instanceof Error ? error.message : String(error),
             }, traceId));
 
-            this.config.logger.error("Entity processing error", {
-                domainId: domain.id,
-                entityId: entity.id,
+            this.config.logger.error("Message processing error", {
+                domainId : domain.id,
+                messageId: message.id,
                 traceId,
-                error   : error instanceof Error ? error.message : String(error),
+                error    : error instanceof Error ? error.message : String(error),
             });
         }
     }
 
     /**
-     * Run classifiers in chain-of-responsibility pattern.
+     * Run ALL classifiers and select highest confidence result.
+     *
+     * Unlike chain-of-responsibility, all classifiers run independently.
+     * The result with highest confidence wins.
      */
     private async runClassifiers(
         domain: DomainRegistration,
-        entity: Entity<object>,
+        message: Entity<object>,
         traceId: string
-    ): Promise<Classification[]> {
-        const classifications: Classification[] = [];
+    ): Promise<ClassifierResultWithSource | null> {
+        const results: ClassifierResultWithSource[] = [];
 
-        const context: ClassifierContext = {
-            config                 : domain.config ?? {},
-            logger                 : this.createClassifierLogger(domain.id, traceId),
-            previousClassifications: [],
+        const baseContext: Omit<ClassificationContext, "logger"> = {
+            config : domain.config ?? {},
+            traceId,
         };
 
-        for (const classifier of domain.classifiers) {
+        // Run ALL classifiers (not chain-of-responsibility)
+        const classifierPromises = domain.classifiers.map(async (classifier) => {
             try {
-                const result = await classifier.evaluate(entity, {
-                    ...context,
-                    previousClassifications: [...classifications],
-                });
+                const context: ClassificationContext = {
+                    ...baseContext,
+                    logger: this.createPluginLogger(domain.id, classifier.id, traceId),
+                };
 
-                if (result) {
-                    classifications.push(result.classification);
+                const output = await classifier.classify(message, context);
 
-                    // Check for halt signal
-                    if (shouldHalt(result)) {
-                        this.config.logger.debug("Classifier chain halted", {
-                            domainId    : domain.id,
-                            classifierId: classifier.id,
-                            entityId    : entity.id,
-                        });
-                        break;
-                    }
+                if (output) {
+                    return {
+                        output,
+                        classifierId: classifier.id,
+                    };
                 }
             }
             catch (error) {
                 this.config.logger.error("Classifier error", {
                     domainId    : domain.id,
                     classifierId: classifier.id,
-                    entityId    : entity.id,
+                    messageId   : message.id,
                     error       : error instanceof Error ? error.message : String(error),
                 });
             }
+            return null;
+        });
+
+        // Wait for all classifiers to complete
+        const classifierResults = await Promise.all(classifierPromises);
+
+        // Collect non-null results
+        for (const result of classifierResults) {
+            if (result) {
+                results.push(result);
+            }
         }
 
-        return classifications;
+        if (results.length === 0) {
+            return null;
+        }
+
+        // Select highest confidence result
+        let winner = results[0];
+        let winnerConfidence = getEffectiveConfidence(winner.output);
+
+        for (let i = 1; i < results.length; i++) {
+            const confidence = getEffectiveConfidence(results[i].output);
+            if (confidence > winnerConfidence) {
+                winner = results[i];
+                winnerConfidence = confidence;
+            }
+        }
+
+        this.config.logger.debug("Classification resolved", {
+            domainId      : domain.id,
+            messageId     : message.id,
+            totalResults  : results.length,
+            winningType   : winner.output.type,
+            winnerConfidence,
+            classifierId  : winner.classifierId,
+        });
+
+        return winner;
     }
 
     /**
-     * Execute actions that should run based on classifications.
+     * Execute actions that match the classification via their bindings.
      */
     private async executeActions(
         domain: DomainRegistration,
-        entity: Entity<object>,
-        classifications: Classification[],
+        message: Entity<object>,
+        classification: ClassificationOutput,
         traceId: string
     ): Promise<void> {
-        // Use the last (most specific) classification for action selection
-        const primaryClassification = classifications[classifications.length - 1];
-
         for (const action of domain.actions) {
-            if (action.shouldExecute(primaryClassification)) {
-                this.emit(createEvent("entity:actionExecuting", {
-                    domainId: domain.id,
-                    entityId: entity.id,
-                    actionId: action.id,
+            // Check if action should execute based on bindings
+            if (!shouldActionExecute(action, classification)) {
+                continue;
+            }
+
+            this.emit(createEvent("message:actionExecuting", {
+                domainId : domain.id,
+                messageId: message.id,
+                actionId : action.id,
+                type     : classification.type,
+            }, traceId));
+
+            try {
+                const context: ActionContext = {
+                    message,
+                    classification,
+                    config : domain.config ?? {},
+                    logger : this.createPluginLogger(domain.id, action.id, traceId),
+                    traceId,
+                };
+
+                const result: ActionResult = await action.handle(context);
+
+                this.emit(createEvent("message:actionExecuted", {
+                    domainId : domain.id,
+                    messageId: message.id,
+                    actionId : action.id,
+                    success  : result.success,
+                    error    : result.error,
                 }, traceId));
 
-                try {
-                    const context: ActionContext = {
-                        entity,
-                        classifications,
-                        classification: primaryClassification,
-                        config        : domain.config ?? {},
-                        logger        : this.createActionLogger(domain.id, action.id, traceId),
-                    };
-
-                    const result = await action.execute(context);
-
-                    this.emit(createEvent("entity:actionExecuted", {
-                        domainId: domain.id,
-                        entityId: entity.id,
-                        actionId: action.id,
-                        success : result.success,
-                        error   : result.error,
-                    }, traceId));
-
-                    if (!result.success) {
-                        this.config.logger.warn("Action failed", {
-                            domainId: domain.id,
-                            actionId: action.id,
-                            entityId: entity.id,
-                            error   : result.error,
-                        });
-                    }
-                }
-                catch (error) {
-                    this.config.logger.error("Action execution error", {
-                        domainId: domain.id,
-                        actionId: action.id,
-                        entityId: entity.id,
-                        error   : error instanceof Error ? error.message : String(error),
+                if (!result.success) {
+                    this.config.logger.warn("Action failed", {
+                        domainId : domain.id,
+                        actionId : action.id,
+                        messageId: message.id,
+                        error    : result.error,
                     });
                 }
+            }
+            catch (error) {
+                this.config.logger.error("Action execution error", {
+                    domainId : domain.id,
+                    actionId : action.id,
+                    messageId: message.id,
+                    error    : error instanceof Error ? error.message : String(error),
+                });
+
+                this.emit(createEvent("message:actionError", {
+                    domainId : domain.id,
+                    messageId: message.id,
+                    actionId : action.id,
+                    error    : error instanceof Error ? error.message : String(error),
+                }, traceId));
             }
         }
     }
@@ -528,26 +596,14 @@ export class TagRouterEngine {
     }
 
     /**
-     * Create a logger for a classifier.
+     * Create a logger for a plugin (classifier or action).
      */
-    private createClassifierLogger(domainId: string, traceId: string): ClassifierLogger {
+    private createPluginLogger(domainId: string, pluginId: string, traceId: string): PluginLogger {
         return {
-            debug: (msg, data) => this.config.logger.debug(`[${domainId}] ${msg}`, { ...data, traceId }),
-            info : (msg, data) => this.config.logger.info(`[${domainId}] ${msg}`, { ...data, traceId }),
-            warn : (msg, data) => this.config.logger.warn(`[${domainId}] ${msg}`, { ...data, traceId }),
-            error: (msg, data) => this.config.logger.error(`[${domainId}] ${msg}`, { ...data, traceId }),
-        };
-    }
-
-    /**
-     * Create a logger for an action.
-     */
-    private createActionLogger(domainId: string, actionId: string, traceId: string): ActionLogger {
-        return {
-            debug: (msg, data) => this.config.logger.debug(`[${domainId}:${actionId}] ${msg}`, { ...data, traceId }),
-            info : (msg, data) => this.config.logger.info(`[${domainId}:${actionId}] ${msg}`, { ...data, traceId }),
-            warn : (msg, data) => this.config.logger.warn(`[${domainId}:${actionId}] ${msg}`, { ...data, traceId }),
-            error: (msg, data) => this.config.logger.error(`[${domainId}:${actionId}] ${msg}`, { ...data, traceId }),
+            debug: (msg, data) => this.config.logger.debug(`[${domainId}:${pluginId}] ${msg}`, { ...data, traceId }),
+            info : (msg, data) => this.config.logger.info(`[${domainId}:${pluginId}] ${msg}`, { ...data, traceId }),
+            warn : (msg, data) => this.config.logger.warn(`[${domainId}:${pluginId}] ${msg}`, { ...data, traceId }),
+            error: (msg, data) => this.config.logger.error(`[${domainId}:${pluginId}] ${msg}`, { ...data, traceId }),
         };
     }
 }

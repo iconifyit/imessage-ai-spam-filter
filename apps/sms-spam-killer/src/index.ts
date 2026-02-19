@@ -3,7 +3,7 @@
  *
  * This is the main entry point for the SMS Spam Killer application.
  * It uses the TagRouterEngine to wire together the domain components
- * (provider, classifier, actions) and orchestrate the processing pipeline.
+ * (provider, classifiers, actions) and orchestrate the processing pipeline.
  *
  * @module sms-spam-killer
  */
@@ -17,9 +17,9 @@ import { TagRouterEngine, type DomainRegistration } from "@tagrouter/engine";
 // Domain components
 import {
     IMessageEntityProvider,
-    SMSClassifier,
-    DeleteSpamAction,
-    NotifySpamAction,
+    SMSClassificationPlugin,
+    DeleteSpamActionPlugin,
+    NotifySpamActionPlugin,
 } from "./domain/index.js";
 
 // Config loader
@@ -77,26 +77,30 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
         inboundOnly: true,
     });
 
-    // Create classifier
-    const classifier = new SMSClassifier({
+    // Create classifier plugin
+    const classifier = new SMSClassificationPlugin({
         types,
-        systemPrompt        : config.systemPrompt,
-        haltOnClassification: true, // Stop chain after first classification
+        systemPrompt: config.systemPrompt,
     });
 
     // Initialize classifier (loads OpenAI config)
     await classifier.initialize();
 
-    // Create actions
+    // Create action plugins
     const actions = [
-        new NotifySpamAction({
-            triggerTypes : ["spam", "scam", "political_fundraising"],
-            minConfidence: 0.7,
+        new NotifySpamActionPlugin({
+            bindings: {
+                spam          : { minConfidence: 0.7 },
+                scam          : { minConfidence: 0.7 },
+                political_spam: { minConfidence: 0.7 },
+            },
         }),
-        new DeleteSpamAction({
-            triggerTypes : ["spam", "scam"],
-            minConfidence: 0.9,
-            dryRun       : config.dryRun,
+        new DeleteSpamActionPlugin({
+            bindings: {
+                spam: { minConfidence: 0.9 },
+                scam: { minConfidence: 0.9 },
+            },
+            dryRun: config.dryRun,
         }),
     ];
 
@@ -146,7 +150,7 @@ async function main(): Promise<void> {
     });
 
     // Subscribe to engine events for observability
-    engine.eventBus.subscribe("engine:started", (event) => {
+    engine.eventBus.subscribe("engine:started", () => {
         console.log(`[ENGINE] Started - polling every ${config.pollingInterval}ms`);
     });
 
@@ -154,18 +158,20 @@ async function main(): Promise<void> {
         console.log("[ENGINE] Stopped");
     });
 
-    engine.eventBus.subscribe("entity:classified", (event) => {
-        const data = event.data as { entityId: string; classifications: Array<{ type: string; confidence: number }> };
-        if (data.classifications?.length > 0) {
-            const c = data.classifications[0];
-            console.log(`[CLASSIFIED] ${data.entityId}: ${c.type} (${(c.confidence * 100).toFixed(0)}%)`);
-        }
+    engine.eventBus.subscribe("message:classified", (event) => {
+        const data = event.data as { messageId: string; type: string; confidence: number };
+        console.log(`[CLASSIFIED] ${data.messageId}: ${data.type} (${(data.confidence * 100).toFixed(0)}%)`);
     });
 
-    engine.eventBus.subscribe("entity:actionExecuted", (event) => {
-        const data = event.data as { entityId: string; actionId: string; success: boolean; error?: string };
+    engine.eventBus.subscribe("message:unclassified", (event) => {
+        const data = event.data as { messageId: string };
+        console.log(`[UNCLASSIFIED] ${data.messageId}: No classification match`);
+    });
+
+    engine.eventBus.subscribe("message:actionExecuted", (event) => {
+        const data = event.data as { messageId: string; actionId: string; success: boolean; error?: string };
         const status = data.success ? "✓" : "✗";
-        console.log(`[ACTION] ${status} ${data.actionId} for ${data.entityId}${data.error ? `: ${data.error}` : ""}`);
+        console.log(`[ACTION] ${status} ${data.actionId} for ${data.messageId}${data.error ? `: ${data.error}` : ""}`);
     });
 
     engine.eventBus.subscribe("engine:error", (event) => {

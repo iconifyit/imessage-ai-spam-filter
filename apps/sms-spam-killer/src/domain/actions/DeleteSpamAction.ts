@@ -1,36 +1,31 @@
 /**
- * @fileoverview Delete Spam Action
+ * @fileoverview Delete Spam Action Plugin
  *
- * Implements the Action contract to delete conversations
+ * Implements the ActionPlugin contract to delete conversations
  * classified as spam.
  *
  * @module domain/actions/DeleteSpamAction
  */
 
 import type {
-    Action,
+    ActionPlugin,
     ActionResult,
     ActionContext,
-    Classification,
+    ActionBinding,
+    MessageType,
 } from "@tagrouter/engine";
 import { deleteConversationBySender } from "../../adapters/imessage/services/applescript.js";
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
 /**
- * Configuration for DeleteSpamAction
+ * Configuration for DeleteSpamActionPlugin
  */
-export interface DeleteSpamActionConfig {
+export interface DeleteSpamActionPluginConfig {
     /**
-     * Classification types that trigger deletion.
-     * Defaults to ["spam"].
+     * Bindings that map message types to minimum confidence thresholds.
+     * Example: { "spam": { minConfidence: 0.9 }, "scam": { minConfidence: 0.85 } }
      */
-    readonly triggerTypes?: string[];
-
-    /**
-     * Minimum confidence required to trigger deletion.
-     * Defaults to 0.9 (90%).
-     */
-    readonly minConfidence?: number;
+    readonly bindings?: Record<MessageType, ActionBinding>;
 
     /**
      * If true, perform a dry run (don't actually delete).
@@ -40,71 +35,63 @@ export interface DeleteSpamActionConfig {
 }
 
 /**
- * Delete Spam Action
+ * Default bindings for delete action.
+ * Only deletes spam and scam messages with high confidence.
+ */
+const DEFAULT_BINDINGS: Record<MessageType, ActionBinding> = {
+    spam: { minConfidence: 0.9 },
+    scam: { minConfidence: 0.9 },
+};
+
+/**
+ * Delete Spam Action Plugin
  *
  * Deletes conversations that are classified as spam with high confidence.
  * Uses AppleScript to interact with Messages.app.
  *
  * @example
  * ```typescript
- * const action = new DeleteSpamAction({
- *     triggerTypes: ["spam"],
- *     minConfidence: 0.9,
+ * const action = new DeleteSpamActionPlugin({
+ *     bindings: {
+ *         spam: { minConfidence: 0.9 },
+ *         political_spam: { minConfidence: 0.85 },
+ *     },
+ *     dryRun: false,
  * });
  *
- * if (action.shouldExecute(classification)) {
- *     const result = await action.execute(context);
- *     console.log(result.success ? "Deleted" : result.error);
- * }
+ * // Engine will call handle() when bindings match
+ * const result = await action.handle(context);
+ * console.log(result.success ? "Deleted" : result.error);
  * ```
  */
-export class DeleteSpamAction implements Action {
-    readonly id = "delete-spam";
-    readonly name = "Delete Spam Messages";
+export class DeleteSpamActionPlugin implements ActionPlugin {
+    readonly id          = "delete-spam";
+    readonly name        = "Delete Spam Messages";
     readonly description = "Deletes conversations classified as spam";
+    readonly bindings: Record<MessageType, ActionBinding>;
 
-    private config: Required<DeleteSpamActionConfig>;
+    private dryRun: boolean;
 
-    constructor(config: DeleteSpamActionConfig = {}) {
-        this.config = {
-            triggerTypes : config.triggerTypes ?? ["spam"],
-            minConfidence: config.minConfidence ?? 0.9,
-            dryRun       : config.dryRun ?? false,
-        };
-    }
-
-    /**
-     * Determine if this action should execute for the given classification.
-     *
-     * @param classification - The classification result
-     * @returns true if this action should execute
-     */
-    shouldExecute(classification: Classification): boolean {
-        // Check if classification type matches any trigger type
-        const typeMatches = this.config.triggerTypes.includes(classification.type);
-
-        // Check if confidence meets minimum threshold
-        const confidenceMet = classification.confidence >= this.config.minConfidence;
-
-        return typeMatches && confidenceMet;
+    constructor(config: DeleteSpamActionPluginConfig = {}) {
+        this.bindings = config.bindings ?? DEFAULT_BINDINGS;
+        this.dryRun   = config.dryRun ?? false;
     }
 
     /**
      * Execute the delete action.
      *
-     * @param context - Execution context with entity and classification
+     * @param context - Execution context with message, classification, config, logger
      * @returns Result of the action execution
      */
-    async execute(context: ActionContext): Promise<ActionResult> {
-        const { entity, classification } = context;
+    async handle(context: ActionContext): Promise<ActionResult> {
+        const { message, classification, logger } = context;
 
-        // Cast to SMSMessage to access metadata
-        const smsEntity = entity as unknown as SMSMessage;
-        const sender = smsEntity.metadata?.sender;
+        const smsMessage = message as unknown as SMSMessage;
+        const sender = smsMessage.metadata?.sender;
 
         if (!sender) {
-            context.logger.warn("Cannot delete: no sender in message metadata", {
-                entityId: entity.id,
+            logger.warn("Cannot delete: no sender in message metadata", {
+                messageId: message.id,
             });
 
             return {
@@ -114,23 +101,22 @@ export class DeleteSpamAction implements Action {
             };
         }
 
-        context.logger.info("Deleting spam conversation", {
-            entityId  : entity.id,
+        logger.info("Deleting spam conversation", {
+            messageId : message.id,
             sender,
             type      : classification.type,
             confidence: classification.confidence,
-            dryRun    : this.config.dryRun,
+            dryRun    : this.dryRun,
         });
 
-        // Dry run - don't actually delete
-        if (this.config.dryRun) {
-            context.logger.info("DRY RUN: Would delete conversation", { sender });
+        if (this.dryRun) {
+            logger.info("DRY RUN: Would delete conversation", { sender });
 
             return {
                 actionId: this.id,
                 success : true,
                 data    : {
-                    dryRun: true,
+                    dryRun     : true,
                     sender,
                     wouldDelete: true,
                 },
@@ -138,14 +124,13 @@ export class DeleteSpamAction implements Action {
         }
 
         try {
-            // Call AppleScript to delete the conversation
             const result = await deleteConversationBySender(sender);
 
             if (result.success) {
-                context.logger.info("Successfully deleted conversation", {
-                    entityId: entity.id,
+                logger.info("Successfully deleted conversation", {
+                    messageId: message.id,
                     sender,
-                    output  : result.output,
+                    output   : result.output,
                 });
 
                 return {
@@ -157,25 +142,24 @@ export class DeleteSpamAction implements Action {
                     },
                 };
             }
-            else {
-                context.logger.error("Failed to delete conversation", {
-                    entityId: entity.id,
-                    sender,
-                    error   : result.error,
-                });
 
-                return {
-                    actionId: this.id,
-                    success : false,
-                    error   : result.error || "Unknown AppleScript error",
-                };
-            }
+            logger.error("Failed to delete conversation", {
+                messageId: message.id,
+                sender,
+                error    : result.error,
+            });
+
+            return {
+                actionId: this.id,
+                success : false,
+                error   : result.error || "Unknown AppleScript error",
+            };
         }
         catch (error) {
-            context.logger.error("Delete action threw error", {
-                entityId: entity.id,
+            logger.error("Delete action threw error", {
+                messageId: message.id,
                 sender,
-                error   : error instanceof Error ? error.message : String(error),
+                error    : error instanceof Error ? error.message : String(error),
             });
 
             return {
@@ -187,16 +171,9 @@ export class DeleteSpamAction implements Action {
     }
 
     /**
-     * Update the minimum confidence threshold.
-     */
-    setMinConfidence(confidence: number): void {
-        this.config = { ...this.config, minConfidence: confidence };
-    }
-
-    /**
      * Enable or disable dry run mode.
      */
     setDryRun(dryRun: boolean): void {
-        this.config = { ...this.config, dryRun };
+        this.dryRun = dryRun;
     }
 }

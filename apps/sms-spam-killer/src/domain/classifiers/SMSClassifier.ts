@@ -1,24 +1,18 @@
 /**
- * @fileoverview SMS Classifier
+ * @fileoverview SMS Classification Plugin
  *
- * Implements the Classifier contract for SMS/iMessage classification.
+ * Implements the ClassificationPlugin contract for SMS/iMessage classification.
  * Delegates to OpenAI for AI-based classification.
- *
- * This classifier:
- * - Loads type definitions from configuration
- * - Uses OpenAI for AI-based classification
- * - Returns ClassifierResult with proper Classification shape
  *
  * @module domain/classifiers/SMSClassifier
  */
 
 import type {
-    Classifier,
-    ClassifierResult,
-    ClassifierContext,
+    ClassificationPlugin,
+    ClassificationContext,
+    ClassificationOutput,
     Entity,
 } from "@tagrouter/engine";
-import { createClassification } from "@tagrouter/engine";
 import { OpenAIClassifier, type OpenAIClassifierConfig } from "../../classifiers/openai-classifier.js";
 import type { SMSMessage } from "../entities/SMSMessage.js";
 
@@ -37,9 +31,9 @@ export interface TypeDefinition {
 }
 
 /**
- * Configuration options for SMSClassifier.
+ * Configuration options for SMSClassificationPlugin.
  */
-export interface SMSClassifierConfig {
+export interface SMSClassificationPluginConfig {
     /**
      * Type definitions for classification categories.
      * These define what types the classifier can return.
@@ -56,12 +50,6 @@ export interface SMSClassifierConfig {
      * OpenAI configuration options.
      */
     readonly openai?: OpenAIClassifierConfig;
-
-    /**
-     * Whether to halt the classifier chain on successful classification.
-     * Defaults to false.
-     */
-    readonly haltOnClassification?: boolean;
 }
 
 /**
@@ -95,47 +83,46 @@ function entityToClassifiableItem(entity: Entity<object>): { id: string; content
 }
 
 /**
- * SMS Classifier
+ * SMS Classification Plugin
  *
- * Implements the Classifier contract for SMS/iMessage messages.
+ * Implements the ClassificationPlugin contract for SMS/iMessage messages.
  * Delegates classification to the OpenAIClassifier.
  *
  * @example
  * ```typescript
- * const classifier = new SMSClassifier({
+ * const plugin = new SMSClassificationPlugin({
  *     types: loadedTypes,
  *     systemPrompt: "You are an SMS classifier...",
  * });
  *
- * await classifier.initialize();
+ * await plugin.initialize();
  *
- * const result = await classifier.evaluate(entity, context);
+ * const result = await plugin.classify(message, context);
  * if (result) {
- *     console.log(result.classification.type);
+ *     console.log(result.type, result.confidence);
  * }
  * ```
  */
-export class SMSClassifier implements Classifier {
+export class SMSClassificationPlugin implements ClassificationPlugin {
     readonly id: string;
-    readonly name        = "SMS Classifier";
+    readonly name        = "SMS Classification Plugin";
     readonly description = "AI-powered SMS/iMessage classifier using OpenAI";
 
     private openaiClassifier: OpenAIClassifier;
-    private config: SMSClassifierConfig;
+    private config: SMSClassificationPluginConfig;
     private initialized = false;
 
     /**
-     * Create a new SMS classifier.
+     * Create a new SMS classification plugin.
      *
-     * @param config - Classifier configuration
-     * @param id - Optional custom classifier ID
+     * @param config - Plugin configuration
+     * @param id - Optional custom plugin ID
      */
-    constructor(config: SMSClassifierConfig, id: string = "sms-classifier") {
+    constructor(config: SMSClassificationPluginConfig, id: string = "sms-classifier") {
         this.id = id;
         this.config = {
             ...config,
-            systemPrompt        : config.systemPrompt || DEFAULT_SMS_SYSTEM_PROMPT,
-            haltOnClassification: config.haltOnClassification ?? false,
+            systemPrompt: config.systemPrompt || DEFAULT_SMS_SYSTEM_PROMPT,
         };
 
         this.openaiClassifier = new OpenAIClassifier(
@@ -145,7 +132,7 @@ export class SMSClassifier implements Classifier {
     }
 
     /**
-     * Initialize the classifier.
+     * Initialize the plugin.
      *
      * Configures the underlying OpenAI classifier with type definitions
      * and system prompt.
@@ -159,7 +146,6 @@ export class SMSClassifier implements Classifier {
             throw new Error("No type definitions provided. Configure types before initializing.");
         }
 
-        // Set system prompt and configure with types
         this.openaiClassifier.setSystemPrompt(this.config.systemPrompt);
         await this.openaiClassifier.configure(this.config.types);
 
@@ -167,88 +153,66 @@ export class SMSClassifier implements Classifier {
     }
 
     /**
-     * Evaluate an entity and return a classification result.
+     * Classify a message and return a classification output.
      *
      * This is the primary method called by the TagRouterEngine.
      *
-     * @param entity - The SMS message entity to evaluate
-     * @param context - Evaluation context with config and logger
-     * @returns ClassifierResult with classification, or null if unable to classify
+     * @param message - The SMS message to classify (read-only)
+     * @param context - Classification context with config and logger
+     * @returns ClassificationOutput or null if unable to classify
      */
-    async evaluate(
-        entity: Entity<object>,
-        context: ClassifierContext
-    ): Promise<ClassifierResult | null> {
+    async classify(
+        message: Entity<object>,
+        context: ClassificationContext
+    ): Promise<ClassificationOutput | null> {
         if (!this.initialized) {
-            throw new Error("Classifier not initialized. Call initialize() first.");
+            throw new Error("Plugin not initialized. Call initialize() first.");
         }
 
-        // Cast through unknown since Entity<object> doesn't overlap with SMSMessage
-        const smsEntity = entity as unknown as SMSMessage;
+        const smsMessage = message as unknown as SMSMessage;
 
-        context.logger.debug("Evaluating SMS message", {
-            entityId: entity.id,
-            sender  : smsEntity.metadata?.sender,
-            length  : entity.content.length,
+        context.logger.debug("Classifying SMS message", {
+            messageId: message.id,
+            sender   : smsMessage.metadata?.sender,
+            length   : message.content.length,
         });
 
         try {
-            // Convert entity to ClassifiableItem for the OpenAI classifier
-            const item = entityToClassifiableItem(entity);
+            const item = entityToClassifiableItem(message);
 
-            // Call the underlying classifier
-            const oldClassification = await this.openaiClassifier.classify(item, {
+            const result = await this.openaiClassifier.classify(item, {
                 includeExplanation: true,
             });
 
-            // Convert old Classification format to new contract format
-            const classification = createClassification(
-                oldClassification.type,
-                oldClassification.confidence,
-                oldClassification.explanation || "Classified by AI",
-                this.id
-            );
-
             context.logger.info("Classification complete", {
-                entityId  : entity.id,
-                type      : classification.type,
-                confidence: classification.confidence,
+                messageId : message.id,
+                type      : result.type,
+                confidence: result.confidence,
             });
 
             return {
-                classification,
-                halt       : this.config.haltOnClassification,
-                annotations: {
-                    model : this.config.openai?.model || "gpt-4o-mini",
-                    sender: smsEntity.metadata?.sender,
-                },
+                type      : result.type,
+                confidence: result.confidence,
+                tags      : result.explanation ? [result.explanation] : undefined,
             };
         }
         catch (error) {
             context.logger.error("Classification failed", {
-                entityId: entity.id,
-                error   : error instanceof Error ? error.message : String(error),
+                messageId: message.id,
+                error    : error instanceof Error ? error.message : String(error),
             });
 
-            // Return unknown classification on error rather than throwing
-            const unknownType = this.config.types.find(t => t.id === "unknown");
-            const classification = createClassification(
-                unknownType?.id || "unknown",
-                0,
-                `Classification error: ${error instanceof Error ? error.message : String(error)}`,
-                this.id
-            );
-
+            // Return unknown classification on error
             return {
-                classification,
-                halt       : false,
-                annotations: { error: true },
+                type      : "unknown",
+                confidence: 0,
+                tags      : [`error: ${error instanceof Error ? error.message : String(error)}`],
             };
         }
     }
 
     /**
-     * Check if the classifier is initialized.
+     * Check if the plugin is initialized.
      */
     get isInitialized(): boolean {
         return this.initialized;

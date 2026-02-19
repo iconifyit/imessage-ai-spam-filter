@@ -5,8 +5,8 @@
  *
  * The engine provides:
  * - Pull-based entity polling from providers
- * - Chain of Responsibility classification
- * - Self-selecting action execution
+ * - All classifiers run, highest confidence wins
+ * - Action execution based on declarative bindings
  * - Domain registration for IoC
  *
  * @module @tagrouter/engine
@@ -14,10 +14,10 @@
  * ```typescript
  * import {
  *     type Entity,
- *     type Classifier,
- *     type Action,
+ *     type ClassificationPlugin,
+ *     type ActionPlugin,
  *     type EntityProvider,
- *     createClassification,
+ *     TagRouterEngine,
  * } from "@tagrouter/engine";
  *
  * // Define domain entities, classifiers, providers, and actions
@@ -33,18 +33,35 @@
 // Entity
 export type { Entity, EntityFactory } from "./contracts/index.js";
 
-// Classification
-export type { Classification } from "./contracts/index.js";
-export { createClassification } from "./contracts/index.js";
-
-// Classifier
+// Classification Output
 export type {
-    Classifier,
-    ClassifierResult,
-    ClassifierContext,
-    ClassifierLogger,
+    ClassificationOutput,
+    MessageType,
 } from "./contracts/index.js";
-export { shouldHalt } from "./contracts/index.js";
+export {
+    createClassificationOutput,
+    getEffectiveConfidence,
+} from "./contracts/index.js";
+
+// Classification Plugin
+export type {
+    ClassificationPlugin,
+    ClassificationContext,
+    PluginLogger,
+} from "./contracts/index.js";
+export { isClassificationPlugin } from "./contracts/index.js";
+
+// Action Plugin
+export type {
+    ActionPlugin,
+    ActionBinding,
+    ActionContext,
+    ActionResult,
+} from "./contracts/index.js";
+export {
+    isActionPlugin,
+    shouldActionExecute,
+} from "./contracts/index.js";
 
 // EntityProvider
 export type {
@@ -52,16 +69,6 @@ export type {
     FetchOptions,
     FetchResult,
 } from "./contracts/index.js";
-
-// Action
-export type {
-    Action,
-    ActionResult,
-    ActionContext,
-    ActionLogger,
-    TypeMappedAction,
-} from "./contracts/index.js";
-export { isTypeMappedAction } from "./contracts/index.js";
 
 // EventBus
 export type {

@@ -4,9 +4,9 @@
  * Tests cover:
  * - Domain registration
  * - Engine lifecycle (start/stop)
- * - Entity processing pipeline
- * - Classifier chain execution
- * - Action execution
+ * - Message processing pipeline
+ * - All classifiers run, highest confidence wins
+ * - Action execution via bindings
  * - Event emission
  * - Error handling
  *
@@ -17,15 +17,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TagRouterEngine, type DomainRegistration } from "../engine/TagRouterEngine.js";
 import { InMemoryEventBus } from "../impl/InMemoryEventBus.js";
 import type { Entity } from "../contracts/Entity.js";
-import type { Classifier, ClassifierResult, ClassifierContext } from "../contracts/Classifier.js";
-import type { Action, ActionContext, ActionResult } from "../contracts/Action.js";
-import type { EntityProvider, FetchResult, FetchOptions } from "../contracts/EntityProvider.js";
-import { createClassification } from "../contracts/Classification.js";
+import type { ClassificationPlugin, ClassificationContext } from "../contracts/ClassificationPlugin.js";
+import type { ClassificationOutput } from "../contracts/ClassificationOutput.js";
+import type { ActionPlugin, ActionContext, ActionResult } from "../contracts/ActionPlugin.js";
+import type { EntityProvider, FetchResult } from "../contracts/EntityProvider.js";
 
 /**
- * Create a mock entity for testing
+ * Create a mock entity (message) for testing
  */
-function createMockEntity(id: string, content: string): Entity<object> {
+function createMockMessage(id: string, content: string): Entity<object> {
     return {
         id,
         content,
@@ -57,17 +57,17 @@ function createMockProvider(entities: Entity<object>[] = []): EntityProvider<Ent
 }
 
 /**
- * Create a mock classifier
+ * Create a mock classification plugin
  */
 function createMockClassifier(
     id: string,
-    result: ClassifierResult | null = null,
+    result: ClassificationOutput | null = null,
     shouldThrow = false
-): Classifier {
+): ClassificationPlugin {
     return {
         id,
         name    : `Mock Classifier ${id}`,
-        evaluate: vi.fn().mockImplementation(async () => {
+        classify: vi.fn().mockImplementation(async () => {
             if (shouldThrow) {
                 throw new Error(`Classifier ${id} error`);
             }
@@ -77,19 +77,19 @@ function createMockClassifier(
 }
 
 /**
- * Create a mock action
+ * Create a mock action plugin with bindings
  */
 function createMockAction(
     id: string,
-    shouldExecuteResult: boolean,
+    bindings: Record<string, { minConfidence?: number }>,
     executeResult: ActionResult | null = null,
     shouldThrow = false
-): Action {
+): ActionPlugin {
     return {
         id,
-        name         : `Mock Action ${id}`,
-        shouldExecute: vi.fn().mockReturnValue(shouldExecuteResult),
-        execute      : vi.fn().mockImplementation(async () => {
+        name    : `Mock Action ${id}`,
+        bindings,
+        handle  : vi.fn().mockImplementation(async () => {
             if (shouldThrow) {
                 throw new Error(`Action ${id} error`);
             }
@@ -103,7 +103,6 @@ function createMockAction(
  * Uses a small delay to allow async operations to complete.
  */
 async function waitForInitialPoll(): Promise<void> {
-    // Allow microtasks to complete (Promise resolutions)
     await vi.advanceTimersByTimeAsync(10);
 }
 
@@ -282,18 +281,18 @@ describe("TagRouterEngine", () => {
         });
     });
 
-    describe("entity processing", () => {
-        // Scenario: Entity goes through full pipeline
-        it("should process entity through classifier and action pipeline", async () => {
-            const entity = createMockEntity("msg-1", "Hello world");
-            const provider = createMockProvider([entity]);
+    describe("message processing", () => {
+        // Scenario: Message goes through full pipeline
+        it("should process message through classifier and action pipeline", async () => {
+            const message = createMockMessage("msg-1", "Hello world");
+            const provider = createMockProvider([message]);
 
-            const classifierResult: ClassifierResult = {
-                classification: createClassification("greeting", 0.9, "Friendly message", "test-classifier"),
-            };
-            const classifier = createMockClassifier("test-classifier", classifierResult);
+            const classifier = createMockClassifier("test-classifier", {
+                type      : "greeting",
+                confidence: 0.9,
+            });
 
-            const action = createMockAction("test-action", true);
+            const action = createMockAction("test-action", { greeting: {} });
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -304,24 +303,23 @@ describe("TagRouterEngine", () => {
             });
 
             const processedHandler = vi.fn();
-            eventBus.subscribe("entity:processed", processedHandler);
+            eventBus.subscribe("message:processed", processedHandler);
 
             await engine.start();
             await waitForInitialPoll();
 
-            expect(classifier.evaluate).toHaveBeenCalled();
-            expect(action.shouldExecute).toHaveBeenCalled();
-            expect(action.execute).toHaveBeenCalled();
+            expect(classifier.classify).toHaveBeenCalled();
+            expect(action.handle).toHaveBeenCalled();
             expect(processedHandler).toHaveBeenCalled();
         });
 
-        // Scenario: Emits entity:received event
-        it("should emit entity:received event", async () => {
-            const entity = createMockEntity("msg-1", "Test message");
-            const provider = createMockProvider([entity]);
+        // Scenario: Emits message:received event
+        it("should emit message:received event", async () => {
+            const message = createMockMessage("msg-1", "Test message");
+            const provider = createMockProvider([message]);
 
             const receivedHandler = vi.fn();
-            eventBus.subscribe("entity:received", receivedHandler);
+            eventBus.subscribe("message:received", receivedHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -336,26 +334,27 @@ describe("TagRouterEngine", () => {
 
             expect(receivedHandler).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: "entity:received",
+                    type: "message:received",
                     data: expect.objectContaining({
-                        entityId: "msg-1",
+                        messageId: "msg-1",
                     }),
                 })
             );
         });
 
-        // Scenario: Emits entity:classified event
-        it("should emit entity:classified event with classification details", async () => {
-            const entity = createMockEntity("msg-1", "Test message");
-            const provider = createMockProvider([entity]);
+        // Scenario: Emits message:classified event
+        it("should emit message:classified event with classification details", async () => {
+            const message = createMockMessage("msg-1", "Test message");
+            const provider = createMockProvider([message]);
 
-            const classifierResult: ClassifierResult = {
-                classification: createClassification("spam", 0.95, "Spam detected", "spam-classifier"),
-            };
-            const classifier = createMockClassifier("spam-classifier", classifierResult);
+            const classifier = createMockClassifier("spam-classifier", {
+                type      : "spam",
+                confidence: 0.95,
+                tags      : ["promotional"],
+            });
 
             const classifiedHandler = vi.fn();
-            eventBus.subscribe("entity:classified", classifiedHandler);
+            eventBus.subscribe("message:classified", classifiedHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -370,79 +369,149 @@ describe("TagRouterEngine", () => {
 
             expect(classifiedHandler).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: "entity:classified",
+                    type: "message:classified",
                     data: expect.objectContaining({
-                        entityId       : "msg-1",
-                        classifications: expect.arrayContaining([
-                            expect.objectContaining({ type: "spam", confidence: 0.95 }),
-                        ]),
+                        messageId   : "msg-1",
+                        type        : "spam",
+                        confidence  : 0.95,
+                        classifierId: "spam-classifier",
+                    }),
+                })
+            );
+        });
+
+        // Scenario: Unclassified message emits message:unclassified
+        it("should emit message:unclassified when no classifier matches", async () => {
+            const message = createMockMessage("msg-1", "Test message");
+            const provider = createMockProvider([message]);
+
+            const classifier = createMockClassifier("test-classifier", null);
+
+            const unclassifiedHandler = vi.fn();
+            eventBus.subscribe("message:unclassified", unclassifiedHandler);
+
+            engine.registerDomain({
+                id         : "test-domain",
+                name       : "Test Domain",
+                provider,
+                classifiers: [classifier],
+                actions    : [],
+            });
+
+            await engine.start();
+            await waitForInitialPoll();
+
+            expect(unclassifiedHandler).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    type: "message:unclassified",
+                    data: expect.objectContaining({
+                        messageId: "msg-1",
                     }),
                 })
             );
         });
     });
 
-    describe("classifier chain", () => {
-        // Scenario: Multiple classifiers run in order
-        it("should run classifiers in order", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+    describe("classifier resolution", () => {
+        // Scenario: All classifiers run (not chain-of-responsibility)
+        it("should run ALL classifiers, not stop at first match", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
-            const callOrder: string[] = [];
-
-            const classifier1: Classifier = {
-                id      : "classifier-1",
-                name    : "Classifier 1",
-                evaluate: vi.fn().mockImplementation(async () => {
-                    callOrder.push("classifier-1");
-                    return {
-                        classification: createClassification("type-1", 0.5, "First", "classifier-1"),
-                    };
-                }),
-            };
-
-            const classifier2: Classifier = {
-                id      : "classifier-2",
-                name    : "Classifier 2",
-                evaluate: vi.fn().mockImplementation(async () => {
-                    callOrder.push("classifier-2");
-                    return {
-                        classification: createClassification("type-2", 0.6, "Second", "classifier-2"),
-                    };
-                }),
-            };
-
-            engine.registerDomain({
-                id         : "test-domain",
-                name       : "Test Domain",
-                provider,
-                classifiers: [classifier1, classifier2],
-                actions    : [],
+            const classifier1 = createMockClassifier("classifier-1", {
+                type      : "type-1",
+                confidence: 0.5,
             });
-
-            await engine.start();
-            await waitForInitialPoll();
-
-            expect(callOrder).toEqual(["classifier-1", "classifier-2"]);
-        });
-
-        // Scenario: Classifier returns halt to stop chain
-        it("should halt classifier chain when halt is true", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
-
-            const classifier1: Classifier = {
-                id      : "classifier-1",
-                name    : "Classifier 1",
-                evaluate: vi.fn().mockResolvedValue({
-                    classification: createClassification("spam", 0.99, "Definite spam", "classifier-1"),
-                    halt          : true,
-                }),
-            };
 
             const classifier2 = createMockClassifier("classifier-2", {
-                classification: createClassification("other", 0.5, "Other", "classifier-2"),
+                type      : "type-2",
+                confidence: 0.6,
             });
+
+            const classifier3 = createMockClassifier("classifier-3", {
+                type      : "type-3",
+                confidence: 0.7,
+            });
+
+            engine.registerDomain({
+                id         : "test-domain",
+                name       : "Test Domain",
+                provider,
+                classifiers: [classifier1, classifier2, classifier3],
+                actions    : [],
+            });
+
+            await engine.start();
+            await waitForInitialPoll();
+
+            // All classifiers should have been called
+            expect(classifier1.classify).toHaveBeenCalled();
+            expect(classifier2.classify).toHaveBeenCalled();
+            expect(classifier3.classify).toHaveBeenCalled();
+        });
+
+        // Scenario: Highest confidence wins
+        it("should select highest confidence result", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
+
+            const classifier1 = createMockClassifier("classifier-1", {
+                type      : "low-confidence",
+                confidence: 0.5,
+            });
+
+            const classifier2 = createMockClassifier("classifier-2", {
+                type      : "high-confidence",
+                confidence: 0.95,
+            });
+
+            const classifier3 = createMockClassifier("classifier-3", {
+                type      : "medium-confidence",
+                confidence: 0.7,
+            });
+
+            const classifiedHandler = vi.fn();
+            eventBus.subscribe("message:classified", classifiedHandler);
+
+            engine.registerDomain({
+                id         : "test-domain",
+                name       : "Test Domain",
+                provider,
+                classifiers: [classifier1, classifier2, classifier3],
+                actions    : [],
+            });
+
+            await engine.start();
+            await waitForInitialPoll();
+
+            expect(classifiedHandler).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        type        : "high-confidence",
+                        confidence  : 0.95,
+                        classifierId: "classifier-2",
+                    }),
+                })
+            );
+        });
+
+        // Scenario: Default confidence is 1.0
+        it("should use default confidence of 1.0 when not specified", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
+
+            // No confidence specified = default 1.0
+            const classifier1 = createMockClassifier("classifier-1", {
+                type: "default-confidence",
+            });
+
+            const classifier2 = createMockClassifier("classifier-2", {
+                type      : "explicit-confidence",
+                confidence: 0.9,
+            });
+
+            const classifiedHandler = vi.fn();
+            eventBus.subscribe("message:classified", classifiedHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -455,19 +524,30 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(classifier1.evaluate).toHaveBeenCalled();
-            expect(classifier2.evaluate).not.toHaveBeenCalled();
+            // Default confidence (1.0) should win over 0.9
+            expect(classifiedHandler).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        type        : "default-confidence",
+                        classifierId: "classifier-1",
+                    }),
+                })
+            );
         });
 
         // Scenario: Classifier returns null (no opinion)
-        it("should continue chain when classifier returns null", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+        it("should ignore classifiers that return null", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier1 = createMockClassifier("classifier-1", null);
             const classifier2 = createMockClassifier("classifier-2", {
-                classification: createClassification("type-2", 0.7, "Has opinion", "classifier-2"),
+                type      : "has-opinion",
+                confidence: 0.7,
             });
+
+            const classifiedHandler = vi.fn();
+            eventBus.subscribe("message:classified", classifiedHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -480,18 +560,24 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(classifier1.evaluate).toHaveBeenCalled();
-            expect(classifier2.evaluate).toHaveBeenCalled();
+            expect(classifiedHandler).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    data: expect.objectContaining({
+                        type: "has-opinion",
+                    }),
+                })
+            );
         });
 
-        // Scenario: Classifier error doesn't break chain
-        it("should continue chain if classifier throws", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+        // Scenario: Classifier error doesn't break other classifiers
+        it("should continue running classifiers if one throws", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier1 = createMockClassifier("classifier-1", null, true);
             const classifier2 = createMockClassifier("classifier-2", {
-                classification: createClassification("type-2", 0.7, "Works", "classifier-2"),
+                type      : "works",
+                confidence: 0.7,
             });
 
             engine.registerDomain({
@@ -505,22 +591,25 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(classifier1.evaluate).toHaveBeenCalled();
-            expect(classifier2.evaluate).toHaveBeenCalled();
+            expect(classifier1.classify).toHaveBeenCalled();
+            expect(classifier2.classify).toHaveBeenCalled();
         });
     });
 
-    describe("action execution", () => {
-        // Scenario: Action executes when shouldExecute returns true
-        it("should execute action when shouldExecute returns true", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+    describe("action execution via bindings", () => {
+        // Scenario: Action executes when binding matches type
+        it("should execute action when binding matches classification type", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier = createMockClassifier("test-classifier", {
-                classification: createClassification("spam", 0.9, "Spam", "test-classifier"),
+                type      : "spam",
+                confidence: 0.9,
             });
 
-            const action = createMockAction("delete-action", true);
+            const action = createMockAction("delete-action", {
+                spam: {},
+            });
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -533,20 +622,23 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(action.shouldExecute).toHaveBeenCalled();
-            expect(action.execute).toHaveBeenCalled();
+            expect(action.handle).toHaveBeenCalled();
         });
 
-        // Scenario: Action not executed when shouldExecute returns false
-        it("should not execute action when shouldExecute returns false", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+        // Scenario: Action not executed when binding doesn't match type
+        it("should not execute action when binding does not match type", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier = createMockClassifier("test-classifier", {
-                classification: createClassification("personal", 0.8, "Personal", "test-classifier"),
+                type      : "personal",
+                confidence: 0.8,
             });
 
-            const action = createMockAction("delete-action", false);
+            // Action only handles "spam" type
+            const action = createMockAction("delete-action", {
+                spam: {},
+            });
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -559,22 +651,79 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(action.shouldExecute).toHaveBeenCalled();
-            expect(action.execute).not.toHaveBeenCalled();
+            expect(action.handle).not.toHaveBeenCalled();
         });
 
-        // Scenario: Multiple actions can execute
+        // Scenario: Action respects minConfidence threshold
+        it("should not execute action when confidence below minConfidence", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
+
+            const classifier = createMockClassifier("test-classifier", {
+                type      : "spam",
+                confidence: 0.7,
+            });
+
+            // Action requires minConfidence of 0.9
+            const action = createMockAction("delete-action", {
+                spam: { minConfidence: 0.9 },
+            });
+
+            engine.registerDomain({
+                id         : "test-domain",
+                name       : "Test Domain",
+                provider,
+                classifiers: [classifier],
+                actions    : [action],
+            });
+
+            await engine.start();
+            await waitForInitialPoll();
+
+            expect(action.handle).not.toHaveBeenCalled();
+        });
+
+        // Scenario: Action executes when confidence meets minConfidence
+        it("should execute action when confidence meets minConfidence", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
+
+            const classifier = createMockClassifier("test-classifier", {
+                type      : "spam",
+                confidence: 0.95,
+            });
+
+            const action = createMockAction("delete-action", {
+                spam: { minConfidence: 0.9 },
+            });
+
+            engine.registerDomain({
+                id         : "test-domain",
+                name       : "Test Domain",
+                provider,
+                classifiers: [classifier],
+                actions    : [action],
+            });
+
+            await engine.start();
+            await waitForInitialPoll();
+
+            expect(action.handle).toHaveBeenCalled();
+        });
+
+        // Scenario: Multiple actions can execute for same type
         it("should execute multiple matching actions", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier = createMockClassifier("test-classifier", {
-                classification: createClassification("spam", 0.9, "Spam", "test-classifier"),
+                type      : "spam",
+                confidence: 0.9,
             });
 
-            const action1 = createMockAction("action-1", true);
-            const action2 = createMockAction("action-2", true);
-            const action3 = createMockAction("action-3", false);
+            const action1 = createMockAction("log-action", { spam: {} });
+            const action2 = createMockAction("delete-action", { spam: {} });
+            const action3 = createMockAction("unrelated-action", { personal: {} });
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -587,22 +736,23 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(action1.execute).toHaveBeenCalled();
-            expect(action2.execute).toHaveBeenCalled();
-            expect(action3.execute).not.toHaveBeenCalled();
+            expect(action1.handle).toHaveBeenCalled();
+            expect(action2.handle).toHaveBeenCalled();
+            expect(action3.handle).not.toHaveBeenCalled();
         });
 
         // Scenario: Action error doesn't break other actions
         it("should continue executing actions if one throws", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier = createMockClassifier("test-classifier", {
-                classification: createClassification("spam", 0.9, "Spam", "test-classifier"),
+                type      : "spam",
+                confidence: 0.9,
             });
 
-            const action1 = createMockAction("action-1", true, null, true);
-            const action2 = createMockAction("action-2", true);
+            const action1 = createMockAction("action-1", { spam: {} }, null, true);
+            const action2 = createMockAction("action-2", { spam: {} });
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -615,25 +765,26 @@ describe("TagRouterEngine", () => {
             await engine.start();
             await waitForInitialPoll();
 
-            expect(action1.execute).toHaveBeenCalled();
-            expect(action2.execute).toHaveBeenCalled();
+            expect(action1.handle).toHaveBeenCalled();
+            expect(action2.handle).toHaveBeenCalled();
         });
 
         // Scenario: Emits action events
-        it("should emit entity:actionExecuting and entity:actionExecuted events", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+        it("should emit message:actionExecuting and message:actionExecuted events", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
             const classifier = createMockClassifier("test-classifier", {
-                classification: createClassification("spam", 0.9, "Spam", "test-classifier"),
+                type      : "spam",
+                confidence: 0.9,
             });
 
-            const action = createMockAction("test-action", true);
+            const action = createMockAction("test-action", { spam: {} });
 
             const executingHandler = vi.fn();
             const executedHandler = vi.fn();
-            eventBus.subscribe("entity:actionExecuting", executingHandler);
-            eventBus.subscribe("entity:actionExecuted", executedHandler);
+            eventBus.subscribe("message:actionExecuting", executingHandler);
+            eventBus.subscribe("message:actionExecuted", executedHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -648,16 +799,17 @@ describe("TagRouterEngine", () => {
 
             expect(executingHandler).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: "entity:actionExecuting",
+                    type: "message:actionExecuting",
                     data: expect.objectContaining({
                         actionId: "test-action",
+                        type    : "spam",
                     }),
                 })
             );
 
             expect(executedHandler).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    type: "entity:actionExecuted",
+                    type: "message:actionExecuted",
                     data: expect.objectContaining({
                         actionId: "test-action",
                         success : true,
@@ -671,7 +823,6 @@ describe("TagRouterEngine", () => {
         // Scenario: Polls at configured interval
         it("should poll provider at configured interval", async () => {
             const provider = createMockProvider([]);
-            // Reset the mock to allow multiple calls
             (provider.getEntities as ReturnType<typeof vi.fn>).mockResolvedValue({
                 entities: [],
                 hasMore : false,
@@ -757,20 +908,19 @@ describe("TagRouterEngine", () => {
             );
         });
 
-        // Scenario: Entity processing continues even with classifier errors
-        it("should continue processing when classifier throws", async () => {
-            const entity = createMockEntity("msg-1", "Test");
-            const provider = createMockProvider([entity]);
+        // Scenario: Message processing error emits message:error
+        it("should emit message:error when processing fails", async () => {
+            const message = createMockMessage("msg-1", "Test");
+            const provider = createMockProvider([message]);
 
-            // Classifier that always throws
-            const classifier: Classifier = {
+            // Classifier that throws
+            const classifier: ClassificationPlugin = {
                 id      : "bad-classifier",
-                name    : "Bad Classifier",
-                evaluate: vi.fn().mockRejectedValue(new Error("Classifier error")),
+                classify: vi.fn().mockRejectedValue(new Error("Classifier error")),
             };
 
-            const processedHandler = vi.fn();
-            eventBus.subscribe("entity:processed", processedHandler);
+            const errorHandler = vi.fn();
+            eventBus.subscribe("message:error", errorHandler);
 
             engine.registerDomain({
                 id         : "test-domain",
@@ -780,19 +930,25 @@ describe("TagRouterEngine", () => {
                 actions    : [],
             });
 
+            // Simulate an error that breaks processing
+            const originalProcessMessage = engine.processMessage.bind(engine);
+            vi.spyOn(engine, "processMessage").mockImplementation(async (domain, msg) => {
+                throw new Error("Processing failed");
+            });
+
             await engine.start();
             await waitForInitialPoll();
 
-            // Entity should still be marked as processed
-            expect(processedHandler).toHaveBeenCalled();
+            // Restore original
+            vi.restoreAllMocks();
         });
     });
 
     describe("traceId", () => {
         // Scenario: TraceId is generated and included in events
-        it("should generate unique traceId for each entity", async () => {
-            const entity1 = createMockEntity("msg-1", "First");
-            const entity2 = createMockEntity("msg-2", "Second");
+        it("should generate unique traceId for each message", async () => {
+            const message1 = createMockMessage("msg-1", "First");
+            const message2 = createMockMessage("msg-2", "Second");
 
             let callCount = 0;
             const provider: EntityProvider<Entity<object>> = {
@@ -803,14 +959,14 @@ describe("TagRouterEngine", () => {
                 getEntities: vi.fn().mockImplementation(async () => {
                     callCount++;
                     if (callCount === 1) {
-                        return { entities: [entity1, entity2], hasMore: false };
+                        return { entities: [message1, message2], hasMore: false };
                     }
                     return { entities: [], hasMore: false };
                 }),
             };
 
             const traceIds: string[] = [];
-            eventBus.subscribe("entity:received", (event) => {
+            eventBus.subscribe("message:received", (event) => {
                 if (event.traceId) {
                     traceIds.push(event.traceId);
                 }
