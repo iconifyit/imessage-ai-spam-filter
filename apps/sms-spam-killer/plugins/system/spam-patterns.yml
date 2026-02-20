@@ -1,0 +1,79 @@
+# System Classifiers: Common Spam Patterns
+# These are high-confidence rules that run before AI classification
+
+# Short code senders (5-6 digit numbers) are typically marketing
+- name: short-code-sender
+  description: Messages from 5-6 digit short codes are typically marketing
+  match:
+    sender: "^\\d{5,6}$"
+  type: marketing
+  confidence: 0.9
+  tags:
+    - short-code
+    - automated
+
+# Typical spam/scam keywords with urgency
+- name: urgent-scam-keywords
+  description: Urgent language combined with financial promises
+  match:
+    regex: "\\b(URGENT|IMMEDIATELY|ACT NOW).*(won|winner|prize|reward|claim)"
+  type: scam
+  confidence: 1.0
+  tags:
+    - urgency
+    - financial
+
+# Cryptocurrency spam
+- name: crypto-spam
+  description: Unsolicited cryptocurrency investment messages
+  match:
+    regex: "\\b(bitcoin|crypto|ethereum|btc|eth).*(invest|profit|earn|double)"
+  type: spam
+  confidence: 0.95
+  tags:
+    - crypto
+    - investment
+
+# Loan/debt spam
+- name: loan-spam
+  description: Unsolicited loan or debt relief offers
+  match:
+    regex: "\\b(loan|debt).*(approved|qualify|relief|consolidat)"
+  type: spam
+  confidence: 0.9
+  tags:
+    - financial
+    - loan
+
+# Political fundraising
+- name: political-fundraising
+  description: Political donation requests
+  match:
+    regex: "\\b(donate|contribution|campaign|PAC|super PAC)\\b"
+  type: political_spam
+  confidence: 0.85
+  tags:
+    - political
+    - fundraising
+
+# Suspicious shortened URLs
+- name: suspicious-urls
+  description: Messages with URL shorteners often used in spam
+  match:
+    regex: "(bit\\.ly|tinyurl|goo\\.gl|t\\.co|ow\\.ly|is\\.gd)/[a-zA-Z0-9]+"
+  type: suspicious
+  confidence: 0.7
+  tags:
+    - url-shortener
+    - link
+
+# Verification/OTP codes (legitimate, don't delete)
+- name: verification-code
+  description: Two-factor authentication and verification codes
+  match:
+    regex: "\\b(verification|code|OTP|2FA|confirm).{0,20}\\d{4,8}\\b"
+  type: transactional
+  confidence: 0.95
+  tags:
+    - verification
+    - security

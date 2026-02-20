@@ -1,0 +1,44 @@
+# Type Definitions for SMS Classification
+# ========================================
+# These types define the categories that the AI classifier can assign to messages.
+# Each type has an id, description, and optional examples to guide classification.
+#
+# The classifier will choose the most appropriate type based on message content.
+
+types:
+  - id: network_message
+    description: Carrier or network provider messages
+
+  - id: political_fundraising
+    description: >-
+      SPAM soliciting political donations - includes donation links,
+      dollar amounts, campaign appeals from unknown numbers
+
+  - id: scam
+    description: Scam attempts, phishing, fraud
+
+  - id: marketing
+    description: Marketing and promotional messages from businesses
+
+  - id: personal
+    description: >-
+      Personal messages from friends, family, acquaintances -
+      even if discussing politics or news
+
+  - id: financial_transaction
+    description: Bank alerts, payment confirmations
+
+  - id: verification_code
+    description: 2FA codes, login verification
+
+  - id: delivery_notification
+    description: Shipping and delivery updates
+
+  - id: appointment_reminder
+    description: Appointment and schedule reminders
+
+  - id: fraud_alert
+    description: Legitimate fraud alerts from banks/services
+
+  - id: unknown
+    description: Cannot be classified into other categories

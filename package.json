@@ -1,0 +1,24 @@
+{
+    "name": "imessage-ai-spam-filter",
+    "version": "2.0.0",
+    "description": "AI-powered iMessage spam filter using TagRouter engine",
+    "private": true,
+    "type": "module",
+    "workspaces": [
+        "packages/*",
+        "apps/*"
+    ],
+    "scripts": {
+        "build": "npm run build --workspaces",
+        "build:engine": "npm run build -w packages/engine",
+        "build:app": "npm run build -w apps/sms-spam-killer",
+        "start": "npm run start -w apps/sms-spam-killer",
+        "test": "npm run test --workspaces --if-present",
+        "clean": "npm run clean --workspaces --if-present"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "author": "Scott",
+    "license": "MIT"
+}
