@@ -13,6 +13,9 @@
  * @module sms-spam-killer
  */
 
+// Load .env before any other imports that depend on environment variables
+import "dotenv/config";
+
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
