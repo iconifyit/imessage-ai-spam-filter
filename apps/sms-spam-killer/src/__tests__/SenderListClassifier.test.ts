@@ -79,7 +79,9 @@ function createTestMessage(overrides: {
  */
 function createTestContext(): ClassificationContext {
     return {
-        logger: createMockLogger(),
+        config  : {},
+        logger  : createMockLogger(),
+        traceId : "test-trace-id",
     };
 }
 
@@ -511,7 +513,13 @@ describe("SenderListClassifier", () => {
         // Scenario: Empty lists always return null
         it("should return null when all lists are empty", () => {
             mockExistsSync.mockReturnValue(true);
-            mockReadFileSync.mockReturnValue("");
+            mockReadFileSync.mockImplementation((path) => {
+                const pathStr = String(path);
+                if (pathStr.includes("contacts")) {
+                    return "[]";
+                }
+                return "";
+            });
 
             const classifier = new SenderListClassifier({
                 friendsFile  : "/path/to/friends.txt",
