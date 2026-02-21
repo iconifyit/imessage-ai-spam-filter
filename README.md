@@ -91,8 +91,8 @@ For detailed architecture diagrams and component descriptions, see [ARCHITECTURE
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/iconify/sms-spam-killer.git
-cd sms-spam-killer/v2
+git clone https://github.com/iconifyit/imessage-ai-spam-filter.git
+cd imessage-ai-spam-filter/v2
 
 # Install dependencies
 npm install
