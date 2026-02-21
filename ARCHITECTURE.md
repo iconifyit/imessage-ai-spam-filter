@@ -24,7 +24,7 @@ SMS Spam Killer is built on a two-layer architecture:
 
 ### High-Level Architecture
 
-```mermaid
+```mermaid 
 ---
 config:
   theme: redux
@@ -102,7 +102,7 @@ flowchart TB
 
 The TagRouter Engine implements IoC - the framework calls your code, not the other way around:
 
-```mermaid
+```mermaid 
 flowchart LR
     subgraph Traditional["Traditional Approach"]
         App1["Your App"] --> Lib["Library"]
@@ -122,7 +122,7 @@ flowchart LR
 
 All components implement well-defined contracts (interfaces):
 
-```mermaid
+```mermaid 
 classDiagram
     class Entity {
         <<interface>>
@@ -177,7 +177,7 @@ The TagRouter Engine handles:
 
 ### Engine Internals
 
-```mermaid
+```mermaid 
 flowchart TB
     subgraph Engine["TagRouterEngine"]
         Start["start()"]
@@ -227,7 +227,7 @@ await engine.start();
 
 ### Complete Message Flow
 
-```mermaid
+```mermaid 
 sequenceDiagram
     participant P as Provider
     participant E as Engine
@@ -267,7 +267,7 @@ sequenceDiagram
 
 When multiple classifiers return results, the highest confidence wins:
 
-```mermaid
+```mermaid 
 flowchart LR
     subgraph Results["Classification Results"]
         R1["System Rules<br/>spam: 0.9"]
@@ -481,28 +481,28 @@ flowchart TB
 The engine emits events at each lifecycle stage:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Starting: engine:starting
-    Starting --> Started: engine:started
+stateDiagram 
+    [*] --> Starting: engine starting
+    Starting --> Started: engine started
 
     state Started {
         [*] --> Polling
-        Polling --> Received: message:received
-        Received --> Classifying: message:classifying
-        Classifying --> Classified: message:classified
-        Classifying --> Unclassified: message:unclassified
-        Classified --> ActionExecuting: message:actionExecuting
-        ActionExecuting --> ActionExecuted: message:actionExecuted
-        ActionExecuting --> ActionError: message:actionError
-        ActionExecuted --> Processed: message:processed
+        Polling --> Received: message received
+        Received --> Classifying: message classifying
+        Classifying --> Classified: message classified
+        Classifying --> Unclassified: message unclassified
+        Classified --> ActionExecuting: message actionExecuting
+        ActionExecuting --> ActionExecuted: message actionExecuted
+        ActionExecuting --> ActionError: message actionError
+        ActionExecuted --> Processed: message processed
         ActionError --> Processed
         Unclassified --> Processed
         Processed --> Polling
     }
 
-    Started --> Stopping: engine:stopping
-    Stopping --> Stopped: engine:stopped
-    Started --> Error: engine:error
+    Started --> Stopping: engine stopping
+    Stopping --> Stopped: engine stopped
+    Started --> Error: engine error
 ```
 
 ### Event Subscription
