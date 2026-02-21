@@ -9,3 +9,8 @@ export {
     type SMSClassificationPluginConfig,
     type TypeDefinition,
 } from "./SMSClassifier.js";
+
+export {
+    SenderListClassifier,
+    type SenderListClassifierConfig,
+} from "./SenderListClassifier.js";

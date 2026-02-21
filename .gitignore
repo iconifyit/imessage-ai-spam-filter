@@ -137,3 +137,9 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# User-specific sender lists (contain personal data)
+# Only .example.txt files are committed
+apps/sms-spam-killer/user/lists/friends.txt
+apps/sms-spam-killer/user/lists/foes.txt
+apps/sms-spam-killer/user/lists/contacts.json

@@ -17,7 +17,7 @@ import type { ActionContext, ClassificationOutput } from "@tagrouter/engine";
 import { createSMSMessage } from "../domain/entities/SMSMessage.js";
 
 // Mock the AppleScript module
-vi.mock("../../adapters/imessage/services/applescript.js", () => ({
+vi.mock("../adapters/imessage/services/applescript.js", () => ({
     deleteConversationBySender: vi.fn(),
 }));
 
@@ -82,8 +82,9 @@ function createTestContext(
     return {
         message,
         classification,
-        config: {},
-        logger: createMockLogger(),
+        config : {},
+        logger : createMockLogger(),
+        traceId: "test-trace-001",
     };
 }
 

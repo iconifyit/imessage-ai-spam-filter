@@ -76,6 +76,7 @@ function createTestContext(
         classification,
         config: {},
         logger: createMockLogger(),
+        traceId: "test-trace-id",
     };
 }
 
