@@ -13,6 +13,9 @@
  * @module sms-spam-killer
  */
 
+// Load .env before any other imports that depend on environment variables
+import "dotenv/config";
+
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -29,8 +32,10 @@ import {
 import {
     IMessageEntityProvider,
     SMSClassificationPlugin,
+    SenderListClassifier,
     DeleteActionPlugin,
     NotifyActionPlugin,
+    AddToFoesActionPlugin,
 } from "./domain/index.js";
 
 // Config loader
@@ -58,6 +63,9 @@ interface AppConfig {
 
     /** Path to user plugins directory */
     userPluginsDir: string;
+
+    /** Path to user lists directory (friends.txt, foes.txt, contacts.json) */
+    listsDir: string;
 }
 
 /**
@@ -99,6 +107,16 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
     const classifiers: ClassificationPlugin[] = [];
     const actions: ActionPlugin[] = [];
 
+    // 0. Add sender list classifier (friends/foes/contacts — fast, static, no API calls)
+    const senderListClassifier = new SenderListClassifier({
+        friendsFile  : join(config.listsDir, "friends.txt"),
+        foesFile     : join(config.listsDir, "foes.txt"),
+        contactsFile : join(config.listsDir, "contacts.json"),
+    });
+    classifiers.push(senderListClassifier);
+    const counts = senderListClassifier.listCounts;
+    console.log(`[INFO] Sender lists loaded: ${counts.friends} friends, ${counts.foes} foes, ${counts.contacts} contacts`);
+
     // 1. Load system plugins (pattern-based, run first)
     console.log(`[INFO] Loading system plugins from: ${config.systemPluginsDir}`);
     const systemPlugins = await pluginLoader.loadFromDirectory(config.systemPluginsDir);
@@ -131,6 +149,9 @@ async function createSMSDomain(config: AppConfig): Promise<DomainRegistration> {
                 political_spam: { minConfidence: 0.7 },
                 suspicious    : { minConfidence: 0.8 },
             },
+        }),
+        new AddToFoesActionPlugin({
+            foesFile: join(config.listsDir, "foes.txt"),
         }),
         new DeleteActionPlugin({
             bindings: {
@@ -183,6 +204,7 @@ async function main(): Promise<void> {
         systemPrompt    : DEFAULT_SYSTEM_PROMPT,
         systemPluginsDir: join(__dirname, "..", "plugins", "system"),
         userPluginsDir  : join(__dirname, "..", "user", "plugins"),
+        listsDir        : join(__dirname, "..", "user", "lists"),
     };
 
     // Create the engine
