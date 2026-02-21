@@ -1,0 +1,21 @@
+# Friends List
+# ============
+# Phone numbers and email addresses in this list will NEVER be flagged as spam.
+# One entry per line. Lines starting with # are comments.
+#
+# Formats supported:
+#   +15551234567      (full international format)
+#   5551234567        (just the number)
+#   mom@icloud.com    (email for iMessage)
+#   Mom               (contact name - partial match)
+#
+# Examples:
+# +15551234567
+# mom@icloud.com
+# Dad
+# Work
+#
+# To use this file:
+#   1. Copy this file to friends.txt
+#   2. Add your trusted contacts (one per line)
+#   3. friends.txt is ignored by git to protect your privacy

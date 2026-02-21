@@ -1,0 +1,21 @@
+# Foes List
+# =========
+# Phone numbers and email addresses in this list will ALWAYS be flagged as spam.
+# Messages from these senders will be auto-deleted (if auto-delete is enabled).
+# One entry per line. Lines starting with # are comments.
+#
+# Formats supported:
+#   +15551234567      (full international format)
+#   5551234567        (just the number)
+#   spam@example.com  (email for iMessage)
+#   SpamCo            (company/contact name - partial match)
+#
+# Examples:
+# +18005551234
+# marketing@spamco.com
+# Crypto Alerts
+#
+# To use this file:
+#   1. Copy this file to foes.txt
+#   2. Add known spammers/blocked contacts (one per line)
+#   3. foes.txt is ignored by git to protect your privacy

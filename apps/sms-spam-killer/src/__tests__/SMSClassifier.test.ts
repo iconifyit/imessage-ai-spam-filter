@@ -19,7 +19,7 @@ import type { ClassificationContext, Entity } from "@tagrouter/engine";
 import { createSMSMessage } from "../domain/entities/SMSMessage.js";
 
 // Mock the OpenAI classifier module
-vi.mock("../../classifiers/openai-classifier.js", () => ({
+vi.mock("../classifiers/openai-classifier.js", () => ({
     OpenAIClassifier: vi.fn().mockImplementation(() => ({
         setSystemPrompt: vi.fn(),
         configure      : vi.fn().mockResolvedValue(undefined),
@@ -53,8 +53,9 @@ function createMockLogger() {
  */
 function createTestContext(): ClassificationContext {
     return {
-        config: {},
-        logger: createMockLogger(),
+        config : {},
+        logger : createMockLogger(),
+        traceId: "test-trace-001",
     };
 }
 
